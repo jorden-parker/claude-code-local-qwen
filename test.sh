@@ -60,6 +60,18 @@ check "launcher is executable" test -x "$launcher"
 check "launcher passes the profile" grep -q 'local-qwen.json' "$launcher"
 check "main settings.json is untouched" jq -e '. == {"theme":"dark"}' "$fake_home/.claude/settings.json"
 
+crush_config="$fake_home/.config/crush-local/crushrc"
+crush_launcher="$fake_home/.local/bin/crush-local"
+check "crush config points the llamacpp provider at the local server" grep -q 'provider add llamacpp .*--type llamacpp --base-url "http://127.0.0.1:8080"' "$crush_config"
+check "crush model uses the server context window" grep -q 'model add llamacpp/test-model .*--context-window 131072' "$crush_config"
+check "crush large and small slots use the local model" sh -c "grep -q '^model large llamacpp/test-model' '$crush_config' && grep -q '^model small llamacpp/test-model' '$crush_config'"
+check "crush launcher is executable" test -x "$crush_launcher"
+check "crush launcher uses its own config and data dirs" sh -c "grep -q 'CRUSH_GLOBAL_CONFIG=\"\$HOME/.config/crush-local\"' '$crush_launcher' && grep -q 'CRUSH_GLOBAL_DATA=\"\$HOME/.local/share/crush-local\"' '$crush_launcher'"
+check "main crush config is untouched" test ! -e "$fake_home/.config/crush"
+if command -v crush >/dev/null 2>&1; then
+  check "crush lists only the local model" sh -c "[ \"\$(HOME='$fake_home' '$crush_launcher' models)\" = llamacpp/test-model ]"
+fi
+
 check "launch-agent stage writes the plist" setup_env "$repo_dir/setup.sh" launch-agent
 plutil -convert json -o "$agent_json" "$launch_agent" 2>/dev/null || true
 check "LaunchAgent plist lints" plutil -lint "$launch_agent"

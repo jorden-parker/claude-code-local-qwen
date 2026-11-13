@@ -45,7 +45,7 @@ This does, in order:
 
 | Stage | What it does |
 |---|---|
-| `profile` | Writes `~/.claude/local-qwen.json` and the `claude-local` launcher |
+| `profile` | Writes `~/.claude/local-qwen.json`, `~/.config/crush-local/crushrc` and the `claude-local` and `crush-local` launchers |
 | `preflight` | Checks chip (arm64), memory, disk |
 | `install` | Installs or upgrades `llama.cpp`, `hf` and `jq`, updates Claude Code |
 | `download` | Downloads the GGUF (~17.7 GB) to `~/models/Qwen3.8-27B-GGUF` |
@@ -128,6 +128,14 @@ rm -rf ~/.omlx          # optional: frees ~29 GB of old model files
 - Use plain `claude` for your normal Anthropic setup. Nothing else changes.
 - Thinking is on. Qwen's card notes that lower reasoning effort often makes agentic tasks slower overall, so leave it on unless you measure a gain.
 - Remote Control is disabled while `ANTHROPIC_BASE_URL` points at a local server ([docs](https://code.claude.com/docs/en/env-vars)).
+
+## Crush
+
+`./setup.sh profile` also sets up [Crush](https://github.com/charmbracelet/crush) against the same server. Run `crush-local` in a repo.
+
+- **Config:** `~/.config/crush-local/crushrc`. It uses Crush's `llamacpp` provider type, sets the context window to match the server, and uses the local model for both the large and small slots.
+- **Separate from plain `crush`:** the launcher sets `CRUSH_GLOBAL_CONFIG`, `CRUSH_GLOBAL_DATA` and `CRUSH_DISABLE_DEFAULT_PROVIDERS=1`, so only the local model shows up and your normal Crush setup is not touched.
+- **Prompt size:** Crush's first request is about 49K characters (26 tools). Claude Code with plugins and MCP was about 105K (32 tools), and `claude-local --bare` about 4K. A smaller prompt means a faster first reply on a local server.
 
 ## What the profile sets
 

@@ -120,6 +120,29 @@ run_start_server() {
   echo "llama-server is up at $SERVER_URL"
 }
 
+write_crush_profile() {
+  model_id=$1
+  crush_config_dir="$HOME/.config/crush-local"
+  crush_launcher="$2/crush-local"
+  mkdir -p "$crush_config_dir"
+  cat > "$crush_config_dir/crushrc" <<EOF
+provider add llamacpp --name "llama.cpp (local)" --type llamacpp --base-url "$SERVER_URL"
+model add llamacpp/$model_id --name "$model_id (local)" --context-window $CONTEXT_TOKENS --default-max-tokens 8192 --can-reason true
+model large llamacpp/$model_id --think --max-tokens 8192
+model small llamacpp/$model_id --max-tokens 8192
+option metrics false
+option provider-auto-update false
+option request-timeout 1800
+EOF
+  # shellcheck disable=SC2016
+  printf '%s\n' '#!/bin/sh' \
+    'export CRUSH_GLOBAL_CONFIG="$HOME/.config/crush-local" CRUSH_GLOBAL_DATA="$HOME/.local/share/crush-local" CRUSH_DISABLE_DEFAULT_PROVIDERS=1' \
+    'exec crush "$@"' > "$crush_launcher"
+  chmod +x "$crush_launcher"
+  echo "crush:    $crush_config_dir/crushrc"
+  echo "launcher: $crush_launcher"
+}
+
 run_profile() {
   model_id=${MODEL_ID:-$MODEL_ALIAS}
   profile="$HOME/.claude/local-qwen.json"
@@ -154,6 +177,7 @@ run_profile() {
   echo "profile:  $profile"
   echo "available models: $(jq -r '.availableModels | join(", ")' "$profile")"
   echo "launcher: $launcher"
+  write_crush_profile "$model_id" "$launcher_dir"
   if [ "$(command -v claude-local 2>/dev/null || true)" != "$launcher" ]; then
     cat <<'EOF'
 NOTE: claude-local is not on your PATH yet. Add ~/.local/bin, then open a new shell:
