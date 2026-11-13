@@ -71,6 +71,10 @@ check "LaunchAgent port is 8080" has_argument_pair --port 8080
 check "context window is 131072" has_argument_pair -c 131072
 check "KV cache is q8_0" has_argument_pair --cache-type-k q8_0
 check "V cache is q8_0" has_argument_pair --cache-type-v q8_0
+chat_template="$fake_home/.config/local-qwen/qwen3.8-27b-chat-template.jinja"
+check "LaunchAgent uses the installed chat template" has_argument_pair --chat-template-file "$chat_template"
+check "installed chat template matches the repo copy" cmp "$repo_dir/qwen3.8-27b-chat-template.jinja" "$chat_template"
+check "chat template accepts system messages after the first user message" sh -c "test -f '$repo_dir/qwen3.8-27b-chat-template.jinja' && ! grep -q 'System message must be at the beginning' '$repo_dir/qwen3.8-27b-chat-template.jinja'"
 check "no draft model by default" jq -e '.ProgramArguments | any(. == "-md") | not' "$agent_json"
 check "LaunchAgent runs at load and stays alive" jq -e '.RunAtLoad == true and .KeepAlive == true' "$agent_json"
 check "LaunchAgent logs to the server log" jq -e --arg log "$fake_home/Library/Logs/qwen-llama-server.log" '.StandardOutPath == $log and .StandardErrorPath == $log' "$agent_json"

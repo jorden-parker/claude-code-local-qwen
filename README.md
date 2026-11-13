@@ -18,10 +18,13 @@ The server runs with:
 
 ```sh
 llama-server -c 131072 -ngl 99 -fa on --cache-type-k q8_0 --cache-type-v q8_0 \
-  --jinja --parallel 1 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0 --presence-penalty 0
+  --jinja --chat-template-file ~/.config/local-qwen/qwen3.8-27b-chat-template.jinja \
+  --parallel 1 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0 --presence-penalty 0
 ```
 
 Sampling is Qwen's thinking-mode recommendation. The script sets it, so there is no manual admin step.
+
+**Chat template:** `qwen3.8-27b-chat-template.jinja` is the GGUF's own template with one change. Claude Code sends hook output as a `system` message after the first user message, and the stock template rejects that with `Jinja Exception: System message must be at the beginning.` The patched copy renders it as a normal system turn instead. If you change `MODEL_REPO`, check this template still fits the new model.
 
 ## Requirements
 

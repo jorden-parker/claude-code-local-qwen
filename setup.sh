@@ -15,6 +15,8 @@ MIN_MEMORY_BYTES=${MIN_MEMORY_BYTES:-51539607552}
 MIN_FREE_DISK_KB=31457280
 launch_agent="$HOME/Library/LaunchAgents/local.qwen.llama-server.plist"
 server_log="$HOME/Library/Logs/qwen-llama-server.log"
+repo_dir=$(cd "$(dirname "$0")" && pwd)
+chat_template="$HOME/.config/local-qwen/qwen3.8-27b-chat-template.jinja"
 
 say() { printf '\n==> %s\n' "$*"; }
 fail() { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
@@ -81,8 +83,10 @@ write_launch_agent() {
   if use_draft; then
     draft=$(resolve_gguf "$DRAFT_REPO" "$DRAFT_QUANT")
   fi
-  mkdir -p "$(dirname "$launch_agent")" "$(dirname "$server_log")"
+  mkdir -p "$(dirname "$launch_agent")" "$(dirname "$server_log")" "$(dirname "$chat_template")"
+  cp "$repo_dir/qwen3.8-27b-chat-template.jinja" "$chat_template"
   jq -n \
+    --arg chat_template "$chat_template" \
     --arg server "$llama_server" \
     --arg gguf "$gguf" \
     --arg model_alias "$MODEL_ALIAS" \
@@ -92,7 +96,7 @@ write_launch_agent() {
     --arg log "$server_log" \
     '{
       Label: "local.qwen.llama-server",
-      ProgramArguments: ([$server, "-m", $gguf, "--alias", $model_alias, "--host", "127.0.0.1", "--port", $port, "-c", $context, "-ngl", "99", "-fa", "on", "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "--jinja", "--parallel", "1", "--temp", "1.0", "--top-p", "0.95", "--top-k", "20", "--min-p", "0", "--presence-penalty", "0"]
+      ProgramArguments: ([$server, "-m", $gguf, "--alias", $model_alias, "--host", "127.0.0.1", "--port", $port, "-c", $context, "-ngl", "99", "-fa", "on", "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "--jinja", "--chat-template-file", $chat_template, "--parallel", "1", "--temp", "1.0", "--top-p", "0.95", "--top-k", "20", "--min-p", "0", "--presence-penalty", "0"]
         + (if $draft == "" then [] else ["-md", $draft, "--spec-type", "draft-dflash", "--spec-draft-n-max", "7"] end)),
       RunAtLoad: true,
       KeepAlive: true,
