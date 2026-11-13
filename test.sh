@@ -47,9 +47,11 @@ launcher="$fake_home/.local/bin/claude-local"
 launch_agent="$fake_home/Library/LaunchAgents/local.qwen.llama-server.plist"
 agent_json="$fake_home/llama-server-agent.json"
 
-setup_env MODEL_ID=test-model "$repo_dir/setup.sh" profile
+profile_output=$(setup_env MODEL_ID=test-model "$repo_dir/setup.sh" profile)
 
 check "profile is valid JSON" jq -e . "$profile"
+check "profile lists the local model in availableModels" jq -e '.availableModels == ["test-model"]' "$profile"
+check "profile stage logs the available models" sh -c 'printf "%s\n" "$1" | grep -q "^available models: test-model$"' sh "$profile_output"
 check "base URL points at local llama-server" jq -e '.env.ANTHROPIC_BASE_URL == "http://127.0.0.1:8080"' "$profile"
 check "every model alias uses the local model" jq -e '[.env.ANTHROPIC_MODEL, .env.ANTHROPIC_DEFAULT_OPUS_MODEL, .env.ANTHROPIC_DEFAULT_SONNET_MODEL, .env.ANTHROPIC_DEFAULT_HAIKU_MODEL, .env.CLAUDE_CODE_SUBAGENT_MODEL] | all(. == "test-model")' "$profile"
 check "profile env matches the llama-server setup" jq -e --arg model test-model '.env == {ANTHROPIC_BASE_URL: "http://127.0.0.1:8080", ANTHROPIC_AUTH_TOKEN: "local", ANTHROPIC_API_KEY: "", ANTHROPIC_MODEL: $model, ANTHROPIC_DEFAULT_OPUS_MODEL: $model, ANTHROPIC_DEFAULT_SONNET_MODEL: $model, ANTHROPIC_DEFAULT_HAIKU_MODEL: $model, CLAUDE_CODE_SUBAGENT_MODEL: $model, CLAUDE_CODE_MAX_CONTEXT_TOKENS: "131072", CLAUDE_CODE_AUTO_COMPACT_WINDOW: "100000", CLAUDE_CODE_MAX_OUTPUT_TOKENS: "8192", API_TIMEOUT_MS: "1800000", CLAUDE_CODE_ATTRIBUTION_HEADER: "0", CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"}' "$profile"

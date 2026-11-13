@@ -127,7 +127,7 @@ run_profile() {
     --arg base_url "$SERVER_URL" \
     --arg model "$model_id" \
     --arg context "$CONTEXT_TOKENS" \
-    '{env: {
+    '{availableModels: [$model], env: {
       ANTHROPIC_BASE_URL: $base_url,
       ANTHROPIC_AUTH_TOKEN: "local",
       ANTHROPIC_API_KEY: "",
@@ -148,6 +148,7 @@ run_profile() {
   printf '%s\n' '#!/bin/sh' 'exec claude --settings "$HOME/.claude/local-qwen.json" "$@"' > "$launcher"
   chmod +x "$launcher"
   echo "profile:  $profile"
+  echo "available models: $(jq -r '.availableModels | join(", ")' "$profile")"
   echo "launcher: $launcher"
   if [ "$(command -v claude-local 2>/dev/null || true)" != "$launcher" ]; then
     cat <<'EOF'
