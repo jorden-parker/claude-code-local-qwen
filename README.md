@@ -161,6 +161,7 @@ rm -rf ~/.omlx          # optional: frees ~29 GB of old model files
 | `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` | No telemetry or update checks |
 | `promptSuggestionEnabled: false` | Top-level setting, not an env var. No background prompt-suggestion request, which would queue behind the single llama-server slot |
 | `idleCompaction: false` | Top-level setting, not an env var. No background compaction while idle, which would occupy the single slot |
+| `apiKeyHelper: ""` | Top-level setting. Overrides any `apiKeyHelper` from your normal settings so `claude-local` uses the local token |
 
 Docs: [model config](https://code.claude.com/docs/en/model-config), [env vars](https://code.claude.com/docs/en/env-vars), [LLM gateway protocol](https://code.claude.com/docs/en/llm-gateway-protocol).
 

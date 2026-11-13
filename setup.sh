@@ -194,7 +194,7 @@ run_profile() {
     --arg base_url "$SERVER_URL" \
     --arg model "$model_id" \
     --arg context "$CONTEXT_TOKENS" \
-    '{availableModels: [$model], promptSuggestionEnabled: false, idleCompaction: false, env: {
+    '{availableModels: [$model], apiKeyHelper: "", promptSuggestionEnabled: false, idleCompaction: false, env: {
       ANTHROPIC_BASE_URL: $base_url,
       ANTHROPIC_AUTH_TOKEN: "local",
       ANTHROPIC_API_KEY: "",
