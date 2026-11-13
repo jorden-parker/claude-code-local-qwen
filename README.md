@@ -146,7 +146,7 @@ rm -rf ~/.omlx          # optional: frees ~29 GB of old model files
 | `ANTHROPIC_*_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL` | Every alias, background task and subagent uses the local model |
 | `CLAUDE_CODE_MAX_CONTEXT_TOKENS=131072` | Claude Code assumes 200K for unknown models; this matches the server |
 | `CLAUDE_CODE_AUTO_COMPACT_WINDOW=100000` | Compacts before the server window fills. 100K is the minimum allowed |
-| `CLAUDE_CODE_MAX_OUTPUT_TOKENS=8192` | Unknown model IDs default to 32K output, which eats context |
+| `CLAUDE_CODE_MAX_OUTPUT_TOKENS=24576` | A hard cap: a longer reply fails with "exceeded the output token maximum". Qwen thinking plus a full file (e.g. a big markdown file) blows past 8192. 24576 still fits under the 131072 window after the 100K compact point |
 | `API_TIMEOUT_MS=1800000` | Slow local prefill on the first call |
 | `CLAUDE_CODE_ATTRIBUTION_HEADER=0` | Keeps the prompt prefix stable so the KV cache hits |
 | `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` | Strips Claude-only beta fields like `context_management` and `defer_loading`. Also turns off MCP tool search |
