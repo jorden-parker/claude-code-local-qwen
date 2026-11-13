@@ -1,17 +1,31 @@
-# Claude Code + local Qwen on an M4 Pro 48 GB
+# Claude Code + local Qwen3.8-27B on an M4 Pro 48 GB
 
-Runs **Qwen3.6-35B-A3B** locally on **oMLX** and connects Claude Code to it through a separate profile. Your normal Claude Code settings are not touched.
+Runs **Qwen3.8-27B** (4-bit GGUF, 128K context) locally with **llama.cpp**'s `llama-server` and connects Claude Code to it through a separate profile. Your normal Claude Code settings are not touched.
 
 ## Why this model and runtime
 
-- **Qwen3.6-35B-A3B** is a mixture-of-experts model with 3B active parameters. On an M4 Pro 48 GB it reads prompts at ~680 tok/s and writes at ~55 tok/s ([oMLX benchmark](https://omlx.ai/benchmarks/5zxiqdh8)).
-- **Qwen3.8-27B** is smarter (SWE-bench Pro 61.7 vs 49.5), but dense, so it is ~4–5× slower here. Claude Code sends a 16k–33k token prompt before your message, so reading speed decides the wait.
-- **oMLX** has an Anthropic `/v1/messages` endpoint and an SSD prompt cache, so follow-up turns are fast.
-- **6-bit** is the default because 4-bit builds lost tool calling after cache hits ([oMLX #825](https://github.com/jundot/omlx/issues/825)).
+- **Qwen3.8-27B** is a dense 27B model and the best coding model that fits 48 GB here. Vendor-reported scores vs Qwen3.6-27B ([model card](https://huggingface.co/Qwen/Qwen3.8-27B)):
+  - SWE-bench Pro (Claude Code harness): 61.7 vs 53.5
+  - Terminal-Bench 2.1: 73.0 vs 63.4
+  - IFBench: 79.5 vs 69.1
+- **Trade-off: speed.** Dense means every token reads all 27B weights. Expect roughly 13–16 tok/s on an M4 Pro (bandwidth estimate, not measured). The 3B-active MoE is much faster. See the [fallback](#fallback-speed-over-smarts).
+- **Memory fits.** 17.7 GB of weights plus ~4 GB of KV cache at 128K (q8_0) is ~22 GB, under macOS's default ~36 GB GPU limit.
+- **Hybrid attention.** Only 16 of 64 layers keep a growing KV cache, so long context stays cheap.
+- **Too big:** Qwen3.8-Flash-Next (125B MoE) does not fit 48 GB. Its smallest build is ~66 GB.
+- **No proxy.** `llama-server` serves the Anthropic Messages API at `/v1/messages` natively. Prompt (prefix) caching is on by default.
+
+The server runs with:
+
+```sh
+llama-server -c 131072 -ngl 99 -fa on --cache-type-k q8_0 --cache-type-v q8_0 \
+  --jinja --parallel 1 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0 --presence-penalty 0
+```
+
+Sampling is Qwen's thinking-mode recommendation. The script sets it, so there is no manual admin step.
 
 ## Requirements
 
-- Apple Silicon Mac, 48 GB memory, macOS 15+, 70 GB free disk
+- Apple Silicon Mac, 48 GB memory, macOS 15+, 30 GB free disk
 - [Homebrew](https://brew.sh) and [Claude Code](https://code.claude.com) installed
 
 ## Steps
@@ -28,102 +42,123 @@ This does, in order:
 
 | Stage | What it does |
 |---|---|
-| `preflight` | Checks chip, memory, disk, macOS |
-| `install` | Installs oMLX and `hf`, updates Claude Code |
-| `download` | Downloads the 6-bit model (~29 GB) to `~/.omlx/models` |
-| `start` | Starts oMLX as a Homebrew service on port 8000 |
 | `profile` | Writes `~/.claude/local-qwen.json` and the `claude-local` launcher |
+| `preflight` | Checks chip (arm64), memory, disk |
+| `install` | Installs or upgrades `llama.cpp`, `hf` and `jq`, updates Claude Code |
+| `download` | Downloads the GGUF (~17.7 GB) to `~/models/Qwen3.8-27B-GGUF` |
+| `start` | Writes the LaunchAgent `local.qwen.llama-server`, starts it, waits for `/health` |
 
-Run one stage with `./setup.sh <stage>`.
+Run one stage with `./setup.sh <stage>`. `launch-agent` writes only the plist.
 
 Options (environment variables):
 
-- `WITH_4BIT=1 ./setup.sh` also downloads the 4-bit model for the A/B test in step 6.
-- `MODEL_VARIANT=4bit ./setup.sh profile` points the profile at the 4-bit model.
-- `OMLX_API_KEY=...` if you set an API key in oMLX.
+| Variable | Default | Why |
+|---|---|---|
+| `MODEL_QUANT` | `UD-Q4_K_XL` | Quant to download. `UD-Q5_K_XL` (21 GB) or `UD-Q6_K_XL` for more quality |
+| `CONTEXT_TOKENS` | `131072` | Server context window. `262144` is the native max |
+| `SPEC_DECODING` | `none` | `dflash` adds a drafter for speed. See step 5 |
+| `SERVER_PORT` / `SERVER_URL` | `8080` / `http://127.0.0.1:8080` | Where the server listens |
+| `MODEL_REPO`, `MODEL_ALIAS` | `unsloth/Qwen3.8-27B-GGUF`, `qwen3.8-27b` | Model source and the name Claude Code sees |
+| `MODELS_DIR` | `$HOME/models` | Where GGUFs are stored |
+| `MODEL_ID` | `$MODEL_ALIAS` | Override the model ID the profile uses |
 
 ### 2. Make sure `claude-local` is on your PATH
 
-The launcher is `~/.local/bin/claude-local`. If setup printed a PATH note, add it:
+`./setup.sh` writes the launcher `~/.local/bin/claude-local` first, before any checks, so it exists even if a later stage fails. If setup printed a PATH note, add the folder and reload:
 
-- zsh: `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc`
+- zsh: `echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc && source ~/.zshrc`
 - fish: `fish_add_path ~/.local/bin`
+
+Check it: `zsh -ic 'command -v claude-local'` should print the launcher path. To rewrite only the launcher and profile, run `./setup.sh profile`.
+
+If `claude-local` is found but says it cannot connect, the server is not running. Most often preflight failed (for example, a Mac with less than 48 GB). Read setup's `ERROR:` line.
 
 ### 3. Optional: raise the GPU memory cap
 
-> ⚠️ Changes a system setting with `sudo`. It resets on reboot. Undo with `./gpu-limit.sh reset`.
+> **Heads up:** changes a system setting with `sudo`. It resets on reboot. Undo with `./gpu-limit.sh reset`.
 
-macOS lets the GPU use about 75% of RAM by default (~36 GB on 48 GB). Only raise it if the 6-bit model fails to load:
+The default ~22 GB fits under macOS's ~36 GB GPU limit, so you probably don't need this. Raise it only for a bigger quant or context, such as `MODEL_QUANT=UD-Q6_K_XL` or `CONTEXT_TOKENS=262144`:
 
 ```sh
 ./gpu-limit.sh          # sets 40960 MB, asks first
 ./gpu-limit.sh reset    # back to the macOS default
 ```
 
-### 4. Manual: set context and sampling in oMLX
-
-Open http://localhost:8000/admin, pick the Qwen3.6-35B-A3B model, and set:
-
-| Setting | Value |
-|---|---|
-| Context length | `131072` |
-| Sampling (non-thinking) | temp `0.7`, top_p `0.8`, top_k `20`, presence_penalty `1.5` |
-| Sampling (thinking, precise coding) | temp `0.6`, top_p `0.95`, top_k `20`, presence_penalty `0` |
-
-Values are from the [Qwen3.6-35B-A3B model card](https://huggingface.co/Qwen/Qwen3.6-35B-A3B). Turning thinking off makes replies faster.
-
-### 5. Smoke test
+### 4. Smoke test
 
 ```sh
 ./smoke-test.sh
 ```
 
-It calls the server directly, then runs `claude-local -p`. The first Claude Code call reads the full system prompt, so expect 30–60 s.
+It calls the server directly, then runs `claude-local -p`. The first call reads the full system prompt, so it is slow. The profile sets `API_TIMEOUT_MS` to 30 minutes for this.
 
 Then run `claude-local` in a real repo:
 
 - Run `/context` to see how big the prompt is.
-- Send two messages. The second should start in a few seconds. If every turn is slow, the prompt cache is not hitting: check the oMLX log.
+- Send two messages. The second should start much faster. If every turn is slow, the prompt cache is not hitting: check `~/Library/Logs/qwen-llama-server.log`.
 
-### 6. A/B test 6-bit vs 4-bit
+### 5. A/B test: DFlash speed-up and quant
 
-1. `WITH_4BIT=1 ./setup.sh download`
-2. Run the same 5–10 tool-heavy tasks with each:
-   - `MODEL_VARIANT=6bit ./setup.sh profile && claude-local`
-   - `MODEL_VARIANT=4bit ./setup.sh profile && claude-local`
-3. Keep the fastest one with zero failed tool calls.
+DFlash uses a 1.1 GB drafter (z-lab's Qwen3.8-27B-DFlash2-GGUF) that proposes ~5 tokens per step on its card. It is lossless on paper but **untested on Mac**.
+
+1. `SPEC_DECODING=dflash ./setup.sh download start`
+2. Run the same 5–10 tool-heavy tasks with each setting:
+   - Default: `./setup.sh start`
+   - DFlash: `SPEC_DECODING=dflash ./setup.sh start`
+3. Keep the faster one with zero failed tool calls.
+
+Optional quant test: `MODEL_QUANT=UD-Q5_K_XL ./setup.sh download start profile` (21 GB, still under the default GPU limit), then compare with `UD-Q4_K_XL`.
+
+## Migrating from the oMLX setup
+
+The old setup used oMLX on port 8000 with the 6-bit Qwen3.6-35B-A3B. To switch:
+
+```sh
+brew services stop omlx && brew uninstall omlx
+rm -rf ~/.omlx          # optional: frees ~29 GB of old model files
+./setup.sh
+```
 
 ## Tips
 
 - `claude-local --bare` loads only the Bash, read and edit tools and skips CLAUDE.md, MCP, skills and hooks. The prompt gets much smaller, so replies come faster.
 - Use plain `claude` for your normal Anthropic setup. Nothing else changes.
+- Thinking is on. Qwen's card notes that lower reasoning effort often makes agentic tasks slower overall, so leave it on unless you measure a gain.
 - Remote Control is disabled while `ANTHROPIC_BASE_URL` points at a local server ([docs](https://code.claude.com/docs/en/env-vars)).
 
 ## What the profile sets
 
 | Variable | Why |
 |---|---|
-| `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` | Point Claude Code at oMLX |
+| `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN=local` | Point Claude Code at `llama-server`. The token overrides any login |
 | `ANTHROPIC_*_MODEL`, `CLAUDE_CODE_SUBAGENT_MODEL` | Every alias, background task and subagent uses the local model |
-| `CLAUDE_CODE_ATTRIBUTION_HEADER=0` | Keeps the prompt prefix stable so the cache hits |
-| `CLAUDE_CODE_MAX_CONTEXT_TOKENS=131072` | Claude Code assumes 200k for unknown models; this matches the server |
+| `CLAUDE_CODE_MAX_CONTEXT_TOKENS=131072` | Claude Code assumes 200K for unknown models; this matches the server |
+| `CLAUDE_CODE_AUTO_COMPACT_WINDOW=100000` | Compacts before the server window fills. 100K is the minimum allowed |
+| `CLAUDE_CODE_MAX_OUTPUT_TOKENS=8192` | Unknown model IDs default to 32K output, which eats context |
+| `API_TIMEOUT_MS=1800000` | Slow local prefill on the first call |
+| `CLAUDE_CODE_ATTRIBUTION_HEADER=0` | Keeps the prompt prefix stable so the KV cache hits |
+| `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` | Strips Claude-only beta fields like `context_management` and `defer_loading`. Also turns off MCP tool search |
 | `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` | No telemetry or update checks |
 
-## Fallback: Ollama
+Docs: [model config](https://code.claude.com/docs/en/model-config), [env vars](https://code.claude.com/docs/en/env-vars), [LLM gateway protocol](https://code.claude.com/docs/en/llm-gateway-protocol).
 
-If oMLX misbehaves, use Ollama 0.40.16 or later:
+## Fallback: speed over smarts
+
+If the 27B is too slow for you, switch to the MoE. It has 3B active parameters, so it writes much faster but scores lower:
 
 ```sh
-ollama launch claude --model qwen3.6:35b-a3b-nvfp4
+MODEL_REPO=unsloth/Qwen3.6-35B-A3B-GGUF MODEL_QUANT=UD-Q4_K_XL MODEL_ALIAS=qwen3.6-35b-a3b ./setup.sh download start profile
 ```
 
-Avoid the `mxfp8` tags: [ollama#17583](https://github.com/ollama/ollama/issues/17583) reports them running very slowly on Macs.
+To go back to Qwen3.8-27B: `./setup.sh start profile`.
 
 ## Uninstall
 
 ```sh
-brew services stop omlx && brew uninstall omlx
-rm -rf ~/.omlx ~/.claude/local-qwen.json ~/.local/bin/claude-local
+launchctl bootout gui/$(id -u)/local.qwen.llama-server
+rm ~/Library/LaunchAgents/local.qwen.llama-server.plist
+rm -rf ~/models/Qwen3.8-27B-GGUF ~/.claude/local-qwen.json ~/.local/bin/claude-local
+brew uninstall llama.cpp   # optional
 ```
 
 ## Tests
@@ -132,9 +167,12 @@ rm -rf ~/.omlx ~/.claude/local-qwen.json ~/.local/bin/claude-local
 ./test.sh
 ```
 
-Checks the generated profile and launcher in a temporary home folder, the `gpu-limit.sh` input guards, and shellcheck.
+Checks the generated profile and launch-agent plist in a temporary home folder, the `gpu-limit.sh` input guards, and shellcheck.
 
 ## Caveats
 
-- Speed figures are community benchmarks, not measured on your machine.
-- oMLX's API, model IDs and admin UI may change. If `setup.sh profile` cannot find the model, run `curl -s localhost:8000/v1/models` and pass `MODEL_ID=<id>`.
+- Speeds are estimates (the 13–16 tok/s figure is a bandwidth estimate), not measured on your machine.
+- Benchmark scores are vendor-reported.
+- DFlash on Mac is unverified. A/B it before relying on it.
+- Anthropic does not officially support non-Claude models behind `ANTHROPIC_BASE_URL`. Claude Code may change how it talks to them.
+- llama.cpp flags, model IDs and the `/v1/models` response may change. If requests fail with an unknown model, run `curl -s localhost:8080/v1/models` and pass `MODEL_ID=<id>` to `./setup.sh profile`.

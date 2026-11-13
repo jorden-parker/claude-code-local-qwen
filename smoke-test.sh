@@ -16,7 +16,7 @@ response=$(curl -sf "$base_url/v1/messages" \
   -H "x-api-key: $auth_token" \
   -H "authorization: Bearer $auth_token" \
   -d "$(jq -n --arg model "$model_id" '{model: $model, max_tokens: 64, messages: [{role: "user", content: "Reply with exactly: OK"}]}')") \
-  || { echo "ERROR: server did not answer. Is oMLX running? brew services info omlx" >&2; exit 1; }
+  || { echo "ERROR: llama-server did not answer. Check the log: tail -n 50 $HOME/Library/Logs/qwen-llama-server.log" >&2; exit 1; }
 echo "reply: $(echo "$response" | jq -r '[.content[] | select(.type == "text") | .text] | join("")')"
 echo "took:  $(( $(date +%s) - start )) s"
 
@@ -26,4 +26,4 @@ start=$(date +%s)
 echo "took:  $(( $(date +%s) - start )) s"
 
 echo
-echo "Smoke test passed. Next: run claude-local in a repo, send two messages, and check the oMLX log shows a cache hit on the second."
+echo "Smoke test passed. Next: run claude-local in a repo, send two messages, and check the log shows the prompt cache reused on the second: tail -n 50 $HOME/Library/Logs/qwen-llama-server.log"

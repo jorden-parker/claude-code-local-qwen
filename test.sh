@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck disable=SC2016
 set -eu
 
 repo_dir=$(cd "$(dirname "$0")" && pwd)
@@ -17,22 +18,77 @@ check() {
   fi
 }
 
+setup_env() {
+  env -i HOME="$fake_home" PATH="$fake_bin:$PATH" MODELS_DIR="$models_dir" "$@"
+}
+
+has_argument_pair() {
+  jq -e --arg flag "$1" --arg value "$2" \
+    '.ProgramArguments | . as $arguments | any(range(0; length - 1); $arguments[.] == $flag and $arguments[. + 1] == $value)' \
+    "$agent_json"
+}
+
 mkdir -p "$fake_home/.claude"
 echo '{"theme":"dark"}' > "$fake_home/.claude/settings.json"
 
-HOME="$fake_home" MODEL_ID="test-model-6bit" "$repo_dir/setup.sh" profile
+fake_bin="$fake_home/bin"
+mkdir -p "$fake_bin"
+printf '#!/bin/sh\n' > "$fake_bin/llama-server"
+chmod +x "$fake_bin/llama-server"
+
+models_dir="$fake_home/models"
+gguf_path="$models_dir/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_XL.gguf"
+draft_path="$models_dir/Qwen3.8-27B-DFlash2-GGUF/Qwen3.8-27B-DFlash2-Q4_K_M.gguf"
+mkdir -p "$(dirname "$gguf_path")" "$(dirname "$draft_path")"
+touch "$gguf_path" "$draft_path"
 
 profile="$fake_home/.claude/local-qwen.json"
 launcher="$fake_home/.local/bin/claude-local"
+launch_agent="$fake_home/Library/LaunchAgents/local.qwen.llama-server.plist"
+agent_json="$fake_home/llama-server-agent.json"
+
+setup_env MODEL_ID=test-model "$repo_dir/setup.sh" profile
 
 check "profile is valid JSON" jq -e . "$profile"
-check "base URL points at local oMLX" jq -e '.env.ANTHROPIC_BASE_URL == "http://localhost:8000"' "$profile"
-check "every model alias uses the local model" jq -e '[.env.ANTHROPIC_MODEL, .env.ANTHROPIC_DEFAULT_OPUS_MODEL, .env.ANTHROPIC_DEFAULT_SONNET_MODEL, .env.ANTHROPIC_DEFAULT_HAIKU_MODEL, .env.CLAUDE_CODE_SUBAGENT_MODEL] | all(. == "test-model-6bit")' "$profile"
-check "attribution header is off" jq -e '.env.CLAUDE_CODE_ATTRIBUTION_HEADER == "0"' "$profile"
-check "context window matches server" jq -e '.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS == "131072"' "$profile"
+check "base URL points at local llama-server" jq -e '.env.ANTHROPIC_BASE_URL == "http://127.0.0.1:8080"' "$profile"
+check "every model alias uses the local model" jq -e '[.env.ANTHROPIC_MODEL, .env.ANTHROPIC_DEFAULT_OPUS_MODEL, .env.ANTHROPIC_DEFAULT_SONNET_MODEL, .env.ANTHROPIC_DEFAULT_HAIKU_MODEL, .env.CLAUDE_CODE_SUBAGENT_MODEL] | all(. == "test-model")' "$profile"
+check "profile env matches the llama-server setup" jq -e --arg model test-model '.env == {ANTHROPIC_BASE_URL: "http://127.0.0.1:8080", ANTHROPIC_AUTH_TOKEN: "local", ANTHROPIC_API_KEY: "", ANTHROPIC_MODEL: $model, ANTHROPIC_DEFAULT_OPUS_MODEL: $model, ANTHROPIC_DEFAULT_SONNET_MODEL: $model, ANTHROPIC_DEFAULT_HAIKU_MODEL: $model, CLAUDE_CODE_SUBAGENT_MODEL: $model, CLAUDE_CODE_MAX_CONTEXT_TOKENS: "131072", CLAUDE_CODE_AUTO_COMPACT_WINDOW: "100000", CLAUDE_CODE_MAX_OUTPUT_TOKENS: "8192", API_TIMEOUT_MS: "1800000", CLAUDE_CODE_ATTRIBUTION_HEADER: "0", CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"}' "$profile"
+check "thinking budget is not capped" jq -e '.env | has("MAX_THINKING_TOKENS") | not' "$profile"
 check "launcher is executable" test -x "$launcher"
 check "launcher passes the profile" grep -q 'local-qwen.json' "$launcher"
 check "main settings.json is untouched" jq -e '. == {"theme":"dark"}' "$fake_home/.claude/settings.json"
+
+check "launch-agent stage writes the plist" setup_env "$repo_dir/setup.sh" launch-agent
+plutil -convert json -o "$agent_json" "$launch_agent" 2>/dev/null || true
+check "LaunchAgent plist lints" plutil -lint "$launch_agent"
+check "LaunchAgent plist is XML" grep -q '<plist' "$launch_agent"
+check "LaunchAgent runs the installed llama-server" jq -e --arg server "$fake_bin/llama-server" '.ProgramArguments[0] == $server' "$agent_json"
+check "LaunchAgent serves the downloaded GGUF" jq -e --arg gguf "$gguf_path" '.ProgramArguments | any(. == $gguf)' "$agent_json"
+check "LaunchAgent listens on 127.0.0.1:8080" has_argument_pair --host 127.0.0.1
+check "LaunchAgent port is 8080" has_argument_pair --port 8080
+check "context window is 131072" has_argument_pair -c 131072
+check "KV cache is q8_0" has_argument_pair --cache-type-k q8_0
+check "V cache is q8_0" has_argument_pair --cache-type-v q8_0
+check "no draft model by default" jq -e '.ProgramArguments | any(. == "-md") | not' "$agent_json"
+check "LaunchAgent runs at load and stays alive" jq -e '.RunAtLoad == true and .KeepAlive == true' "$agent_json"
+check "LaunchAgent logs to the server log" jq -e --arg log "$fake_home/Library/Logs/qwen-llama-server.log" '.StandardOutPath == $log and .StandardErrorPath == $log' "$agent_json"
+
+setup_env SPEC_DECODING=dflash "$repo_dir/setup.sh" launch-agent
+plutil -convert json -o "$agent_json" "$launch_agent" 2>/dev/null || true
+check "dflash LaunchAgent plist lints" plutil -lint "$launch_agent"
+check "dflash LaunchAgent loads the downloaded draft GGUF" has_argument_pair -md "$draft_path"
+check "dflash LaunchAgent selects draft-dflash decoding" has_argument_pair --spec-type draft-dflash
+check "dflash LaunchAgent sets 7 draft tokens" has_argument_pair --spec-draft-n-max 7
+
+low_memory_home="$fake_home/low-memory"
+mkdir -p "$low_memory_home"
+setup_status=0
+env -i HOME="$low_memory_home" PATH="$fake_bin:/usr/bin:/bin" MIN_MEMORY_BYTES=999999999999999 "$repo_dir/setup.sh" >/dev/null 2>&1 || setup_status=$?
+check "setup stops when preflight fails" test "$setup_status" -ne 0
+check "launcher exists even when preflight fails" test -x "$low_memory_home/.local/bin/claude-local"
+resolved_launcher=$(env -i HOME="$low_memory_home" PATH=/usr/bin:/bin zsh -c 'PATH="$1:$PATH"; command -v claude-local' zsh "$low_memory_home/.local/bin")
+check "zsh resolves claude-local to the fake launcher" test "$resolved_launcher" = "$low_memory_home/.local/bin/claude-local"
+
 check "gpu-limit rejects non-numeric values" sh -c "! '$repo_dir/gpu-limit.sh' abc"
 check "gpu-limit rejects values that starve macOS" sh -c "! '$repo_dir/gpu-limit.sh' 46000"
 
