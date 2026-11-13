@@ -16,15 +16,6 @@ else
 fi
 
 echo
-echo "==> Last $line_count lines of $server_log"
-if [ -f "$server_log" ]; then
-  tail -n "$line_count" "$server_log"
-else
-  echo "no server log yet. The server has not started."
-fi
-
-if [ "${1:-}" = "-f" ] && [ -f "$server_log" ]; then
-  echo
-  echo "==> Following $server_log (Ctrl-C to stop)"
-  tail -n 0 -f "$server_log"
-fi
+echo "==> Streaming $server_log (Ctrl-C to stop)"
+[ -f "$server_log" ] || echo "no server log yet. Waiting for the server to start."
+exec tail -n "$line_count" -F "$server_log" 2>/dev/null

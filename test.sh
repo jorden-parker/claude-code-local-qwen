@@ -125,20 +125,37 @@ check "zsh resolves claude-local to the fake launcher" test "$resolved_launcher"
 
 logs_home="$fake_home/logs"
 logs_bin="$logs_home/bin"
+server_log="$logs_home/Library/Logs/qwen-llama-server.log"
+logs_output_file="$logs_home/logs-output"
 mkdir -p "$logs_home/Library/Logs" "$logs_bin"
-printf 'first line\nsrv  load_model: loaded\n' > "$logs_home/Library/Logs/qwen-llama-server.log"
+
+stream_logs_then_append() {
+  env -i HOME="$logs_home" PATH="$logs_bin:/usr/bin:/bin" "$repo_dir/logs.sh" > "$logs_output_file" 2>&1 &
+  logs_pid=$!
+  sleep 1
+  printf '%s\n' "$1" >> "$server_log"
+  sleep 2
+  kill "$logs_pid" 2>/dev/null || true
+  wait "$logs_pid" 2>/dev/null || true
+  cat "$logs_output_file"
+}
+
+printf 'first line\nsrv  load_model: loaded\n' > "$server_log"
 printf '#!/bin/sh\nprintf "\\tstate = running\\n\\tlast exit code = 0\\n"\n' > "$logs_bin/launchctl"
 chmod +x "$logs_bin/launchctl"
-logs_output=$(env -i HOME="$logs_home" PATH="$logs_bin:/usr/bin:/bin" "$repo_dir/logs.sh" 2>&1 || true)
+logs_output=$(stream_logs_then_append "srv  appended while streaming")
 check "logs shows the service state" sh -c 'printf "%s\n" "$1" | grep -q "state = running"' sh "$logs_output"
 check "logs shows the end of the server log" sh -c 'printf "%s\n" "$1" | grep -q "srv  load_model: loaded"' sh "$logs_output"
+check "logs keeps streaming lines written after it starts" sh -c 'printf "%s\n" "$1" | grep -q "srv  appended while streaming"' sh "$logs_output"
+
 printf '#!/bin/sh\n[ "$1" = print ] && exit 113\nprintf "launchd: local.qwen.llama-server bootstrap failed\\n"\n' > "$logs_bin/launchctl"
 printf '#!/bin/sh\nprintf "launchd: local.qwen.llama-server bootstrap failed\\n"\n' > "$logs_bin/log"
 chmod +x "$logs_bin/launchctl" "$logs_bin/log"
-rm "$logs_home/Library/Logs/qwen-llama-server.log"
-logs_output=$(env -i HOME="$logs_home" PATH="$logs_bin:/usr/bin:/bin" "$repo_dir/logs.sh" 2>&1 || true)
+rm "$server_log"
+logs_output=$(stream_logs_then_append "srv  server started later")
 check "logs says when the service is not loaded" sh -c 'printf "%s\n" "$1" | grep -q "not loaded"' sh "$logs_output"
 check "logs says when the server log is missing" sh -c 'printf "%s\n" "$1" | grep -q "no server log"' sh "$logs_output"
+check "logs streams the server log once it appears" sh -c 'printf "%s\n" "$1" | grep -q "srv  server started later"' sh "$logs_output"
 check "logs shows macOS launchd messages when the service is not loaded" sh -c 'printf "%s\n" "$1" | grep -q "bootstrap failed"' sh "$logs_output"
 
 check "gpu-limit rejects non-numeric values" sh -c "! '$repo_dir/gpu-limit.sh' abc"
