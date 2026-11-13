@@ -54,8 +54,8 @@ download_gguf() {
 use_draft() {
   case "$SPEC_DECODING" in
     dflash) return 0 ;;
-    none) return 1 ;;
-    *) fail "SPEC_DECODING must be none or dflash, found $SPEC_DECODING" ;;
+    none|mtp) return 1 ;;
+    *) fail "SPEC_DECODING must be none, mtp or dflash, found $SPEC_DECODING" ;;
   esac
 }
 
@@ -83,6 +83,12 @@ write_launch_agent() {
   if use_draft; then
     draft=$(resolve_gguf "$DRAFT_REPO" "$DRAFT_QUANT")
   fi
+  spec_type=""
+  spec_draft_max=""
+  case "$SPEC_DECODING" in
+    mtp) spec_type="draft-mtp"; spec_draft_max=2 ;;
+    dflash) spec_type="draft-dflash"; spec_draft_max=7 ;;
+  esac
   mkdir -p "$(dirname "$launch_agent")" "$(dirname "$server_log")" "$(dirname "$chat_template")"
   cp "$repo_dir/qwen3.8-27b-chat-template.jinja" "$chat_template"
   jq -n \
@@ -93,11 +99,14 @@ write_launch_agent() {
     --arg port "$SERVER_PORT" \
     --arg context "$CONTEXT_TOKENS" \
     --arg draft "$draft" \
+    --arg spec_type "$spec_type" \
+    --arg spec_draft_max "$spec_draft_max" \
     --arg log "$server_log" \
     '{
       Label: "local.qwen.llama-server",
-      ProgramArguments: ([$server, "-m", $gguf, "--alias", $model_alias, "--host", "127.0.0.1", "--port", $port, "-c", $context, "-ngl", "99", "-fa", "on", "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "--jinja", "--chat-template-file", $chat_template, "--parallel", "1", "--temp", "1.0", "--top-p", "0.95", "--top-k", "20", "--min-p", "0", "--presence-penalty", "0"]
-        + (if $draft == "" then [] else ["-md", $draft, "--spec-type", "draft-dflash", "--spec-draft-n-max", "7"] end)),
+      ProgramArguments: ([$server, "-m", $gguf, "--alias", $model_alias, "--host", "127.0.0.1", "--port", $port, "-c", $context, "-ngl", "99", "-fa", "on", "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "--jinja", "--chat-template-file", $chat_template, "--parallel", "1", "--cache-ram", "16384", "--temp", "1.0", "--top-p", "0.95", "--top-k", "20", "--min-p", "0", "--presence-penalty", "0"]
+        + (if $spec_type == "" then [] else ["--spec-type", $spec_type, "--spec-draft-n-max", $spec_draft_max] end)
+        + (if $draft == "" then [] else ["-md", $draft] end)),
       RunAtLoad: true,
       KeepAlive: true,
       StandardOutPath: $log,
@@ -160,7 +169,7 @@ run_profile() {
     --arg base_url "$SERVER_URL" \
     --arg model "$model_id" \
     --arg context "$CONTEXT_TOKENS" \
-    '{availableModels: [$model], env: {
+    '{availableModels: [$model], promptSuggestionEnabled: false, idleCompaction: false, env: {
       ANTHROPIC_BASE_URL: $base_url,
       ANTHROPIC_AUTH_TOKEN: "local",
       ANTHROPIC_API_KEY: "",

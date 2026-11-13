@@ -51,6 +51,8 @@ profile_output=$(setup_env MODEL_ID=test-model "$repo_dir/setup.sh" profile)
 
 check "profile is valid JSON" jq -e . "$profile"
 check "profile lists the local model in availableModels" jq -e '.availableModels == ["test-model"]' "$profile"
+check "profile disables prompt suggestions" jq -e '.promptSuggestionEnabled == false' "$profile"
+check "profile disables idle compaction" jq -e '.idleCompaction == false' "$profile"
 check "profile stage logs the available models" sh -c 'printf "%s\n" "$1" | grep -q "^available models: test-model$"' sh "$profile_output"
 check "base URL points at local llama-server" jq -e '.env.ANTHROPIC_BASE_URL == "http://127.0.0.1:8080"' "$profile"
 check "every model alias uses the local model" jq -e '[.env.ANTHROPIC_MODEL, .env.ANTHROPIC_DEFAULT_OPUS_MODEL, .env.ANTHROPIC_DEFAULT_SONNET_MODEL, .env.ANTHROPIC_DEFAULT_HAIKU_MODEL, .env.CLAUDE_CODE_SUBAGENT_MODEL] | all(. == "test-model")' "$profile"
@@ -83,6 +85,7 @@ check "LaunchAgent port is 8080" has_argument_pair --port 8080
 check "context window is 131072" has_argument_pair -c 131072
 check "KV cache is q8_0" has_argument_pair --cache-type-k q8_0
 check "V cache is q8_0" has_argument_pair --cache-type-v q8_0
+check "prompt cache is capped at 16384 MiB" has_argument_pair --cache-ram 16384
 chat_template="$fake_home/.config/local-qwen/qwen3.8-27b-chat-template.jinja"
 check "LaunchAgent uses the installed chat template" has_argument_pair --chat-template-file "$chat_template"
 check "installed chat template matches the repo copy" cmp "$repo_dir/qwen3.8-27b-chat-template.jinja" "$chat_template"
@@ -97,6 +100,26 @@ check "dflash LaunchAgent plist lints" plutil -lint "$launch_agent"
 check "dflash LaunchAgent loads the downloaded draft GGUF" has_argument_pair -md "$draft_path"
 check "dflash LaunchAgent selects draft-dflash decoding" has_argument_pair --spec-type draft-dflash
 check "dflash LaunchAgent sets 7 draft tokens" has_argument_pair --spec-draft-n-max 7
+
+check "mtp LaunchAgent is written" setup_env SPEC_DECODING=mtp "$repo_dir/setup.sh" launch-agent
+plutil -convert json -o "$agent_json" "$launch_agent" 2>/dev/null || true
+check "mtp LaunchAgent plist lints" plutil -lint "$launch_agent"
+check "mtp LaunchAgent selects draft-mtp decoding" has_argument_pair --spec-type draft-mtp
+check "mtp LaunchAgent sets 2 draft tokens" has_argument_pair --spec-draft-n-max 2
+check "mtp LaunchAgent loads no draft GGUF" jq -e '.ProgramArguments | any(. == "-md") | not' "$agent_json"
+
+hf_calls="$fake_home/hf-calls"
+printf '#!/bin/sh\necho "$*" >> "%s"\n' "$hf_calls" > "$fake_bin/hf"
+chmod +x "$fake_bin/hf"
+download_status=0
+setup_env SPEC_DECODING=mtp "$repo_dir/setup.sh" download >/dev/null 2>&1 || download_status=$?
+check "mtp download succeeds" test "$download_status" -eq 0
+check "mtp download fetches only the main model" sh -c "[ \"\$(grep -c '' '$hf_calls')\" -eq 1 ] && ! grep -q DFlash '$hf_calls'"
+
+invalid_status=0
+invalid_output=$(setup_env SPEC_DECODING=bogus "$repo_dir/setup.sh" launch-agent 2>&1) || invalid_status=$?
+check "invalid SPEC_DECODING fails" test "$invalid_status" -ne 0
+check "invalid SPEC_DECODING lists none, mtp or dflash" sh -c 'printf "%s\n" "$1" | grep -q "none, mtp or dflash"' sh "$invalid_output"
 
 start_bin="$fake_home/start-bin"
 unload_polls_left="$fake_home/unload-polls-left"
