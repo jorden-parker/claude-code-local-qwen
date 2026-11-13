@@ -123,6 +123,24 @@ check "launcher exists even when preflight fails" test -x "$low_memory_home/.loc
 resolved_launcher=$(env -i HOME="$low_memory_home" PATH=/usr/bin:/bin zsh -c 'PATH="$1:$PATH"; command -v claude-local' zsh "$low_memory_home/.local/bin")
 check "zsh resolves claude-local to the fake launcher" test "$resolved_launcher" = "$low_memory_home/.local/bin/claude-local"
 
+logs_home="$fake_home/logs"
+logs_bin="$logs_home/bin"
+mkdir -p "$logs_home/Library/Logs" "$logs_bin"
+printf 'first line\nsrv  load_model: loaded\n' > "$logs_home/Library/Logs/qwen-llama-server.log"
+printf '#!/bin/sh\nprintf "\\tstate = running\\n\\tlast exit code = 0\\n"\n' > "$logs_bin/launchctl"
+chmod +x "$logs_bin/launchctl"
+logs_output=$(env -i HOME="$logs_home" PATH="$logs_bin:/usr/bin:/bin" "$repo_dir/logs.sh" 2>&1 || true)
+check "logs shows the service state" sh -c 'printf "%s\n" "$1" | grep -q "state = running"' sh "$logs_output"
+check "logs shows the end of the server log" sh -c 'printf "%s\n" "$1" | grep -q "srv  load_model: loaded"' sh "$logs_output"
+printf '#!/bin/sh\n[ "$1" = print ] && exit 113\nprintf "launchd: local.qwen.llama-server bootstrap failed\\n"\n' > "$logs_bin/launchctl"
+printf '#!/bin/sh\nprintf "launchd: local.qwen.llama-server bootstrap failed\\n"\n' > "$logs_bin/log"
+chmod +x "$logs_bin/launchctl" "$logs_bin/log"
+rm "$logs_home/Library/Logs/qwen-llama-server.log"
+logs_output=$(env -i HOME="$logs_home" PATH="$logs_bin:/usr/bin:/bin" "$repo_dir/logs.sh" 2>&1 || true)
+check "logs says when the service is not loaded" sh -c 'printf "%s\n" "$1" | grep -q "not loaded"' sh "$logs_output"
+check "logs says when the server log is missing" sh -c 'printf "%s\n" "$1" | grep -q "no server log"' sh "$logs_output"
+check "logs shows macOS launchd messages when the service is not loaded" sh -c 'printf "%s\n" "$1" | grep -q "bootstrap failed"' sh "$logs_output"
+
 check "gpu-limit rejects non-numeric values" sh -c "! '$repo_dir/gpu-limit.sh' abc"
 check "gpu-limit rejects values that starve macOS" sh -c "! '$repo_dir/gpu-limit.sh' 46000"
 

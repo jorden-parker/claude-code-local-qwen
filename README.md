@@ -124,6 +124,7 @@ rm -rf ~/.omlx          # optional: frees ~29 GB of old model files
 
 ## Tips
 
+- `./logs.sh` shows whether the server is running and the last 50 lines of its log. `./logs.sh -f` keeps following the log. If the server is not loaded, it also shows recent macOS `launchd` messages about it, which is where errors like `Bootstrap failed: 5` end up.
 - `claude-local --bare` loads only the Bash, read and edit tools and skips CLAUDE.md, MCP, skills and hooks. The prompt gets much smaller, so replies come faster.
 - Use plain `claude` for your normal Anthropic setup. Nothing else changes.
 - Thinking is on. Qwen's card notes that lower reasoning effort often makes agentic tasks slower overall, so leave it on unless you measure a gain.
