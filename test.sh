@@ -70,6 +70,39 @@ check "crush large and small slots use the local model" sh -c "grep -q '^model l
 check "crush launcher is executable" test -x "$crush_launcher"
 check "crush launcher uses its own config and data dirs" sh -c "grep -q 'CRUSH_GLOBAL_CONFIG=\"\$HOME/.config/crush-local\"' '$crush_launcher' && grep -q 'CRUSH_GLOBAL_DATA=\"\$HOME/.local/share/crush-local\"' '$crush_launcher'"
 check "main crush config is untouched" test ! -e "$fake_home/.config/crush"
+write_skill() {
+  mkdir -p "$1"
+  printf '%s\n' '---' "name: $(basename "$1")" "description: $2" ${3:+"$3"} '---' "Body of $(basename "$1")." > "$1/SKILL.md"
+}
+write_skill "$fake_home/.claude/skills/alpha" "Alpha skill."
+mkdir -p "$fake_home/.claude/skills/alpha/scripts"
+echo 'echo alpha' > "$fake_home/.claude/skills/alpha/scripts/run.sh"
+write_skill "$fake_home/.agents/skills/beta" "Beta skill." "user-invocable: false"
+write_skill "$fake_home/.config/crush/skills/gamma" "Gamma from crush."
+write_skill "$fake_home/.claude/skills/gamma" "Gamma from claude."
+write_skill "$fake_home/.config/agents/skills/delta" "Delta skill."
+ln -s "$fake_home/missing" "$fake_home/.config/crush/skills/broken"
+fake_crush_bin="$fake_home/crush-bin"
+mkdir -p "$fake_crush_bin"
+printf '%s\n' '#!/bin/sh' 'echo "$CRUSH_SKILLS_DIR"' > "$fake_crush_bin/crush"
+chmod +x "$fake_crush_bin/crush"
+run_crush_launcher() {
+  HOME="$fake_home" PATH="$fake_crush_bin:$PATH" "$crush_launcher"
+}
+skills_dir=$(run_crush_launcher)
+check "crush launcher points CRUSH_SKILLS_DIR at its generated skills" test "$skills_dir" = "$fake_home/.local/share/crush-local/skills"
+check "crush skills become user-invocable" grep -qx 'user-invocable: true' "$skills_dir/alpha/SKILL.md"
+check "crush skills keep frontmatter and body" sh -c "grep -v '^user-invocable: true\$' '$skills_dir/alpha/SKILL.md' | cmp -s - '$fake_home/.claude/skills/alpha/SKILL.md'"
+check "crush skills keep their supporting files" test -f "$skills_dir/alpha/scripts/run.sh"
+check "crush skills keep an explicit user-invocable value" sh -c "grep -qx 'user-invocable: false' '$skills_dir/beta/SKILL.md' && ! grep -qx 'user-invocable: true' '$skills_dir/beta/SKILL.md'"
+check "crush skills from XDG agents dir are included" grep -qx 'user-invocable: true' "$skills_dir/delta/SKILL.md"
+check "crush skills follow Crush's last-wins order" grep -q 'Gamma from claude' "$skills_dir/gamma/SKILL.md"
+check "crush skills skip broken links" test ! -e "$skills_dir/broken"
+check "original skills are untouched" sh -c "! grep -q user-invocable '$fake_home/.claude/skills/alpha/SKILL.md'"
+rm -rf "$fake_home/.config/agents/skills/delta"
+run_crush_launcher >/dev/null
+check "removed skills disappear on next launch" test ! -e "$skills_dir/delta"
+
 if command -v crush >/dev/null 2>&1; then
   check "crush lists only the local model" sh -c "[ \"\$(HOME='$fake_home' '$crush_launcher' models)\" = llamacpp/test-model ]"
 fi

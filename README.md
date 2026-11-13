@@ -143,6 +143,7 @@ rm -rf ~/.omlx          # optional: frees ~29 GB of old model files
 
 - **Config:** `~/.config/crush-local/crushrc`. It uses Crush's `llamacpp` provider type, sets the context window to match the server, and uses the local model for both the large and small slots.
 - **Separate from plain `crush`:** the launcher sets `CRUSH_GLOBAL_CONFIG`, `CRUSH_GLOBAL_DATA` and `CRUSH_DISABLE_DEFAULT_PROVIDERS=1`, so only the local model shows up and your normal Crush setup is not touched.
+- **Skills in the `ctrl+p` palette:** Crush only lists skills marked `user-invocable: true`. On each start the launcher copies the skills from `~/.config/crush/skills`, `~/.config/agents/skills`, `~/.agents/skills` and `~/.claude/skills` to `~/.local/share/crush-local/skills`, adds that line unless the skill already sets it, and points `CRUSH_SKILLS_DIR` there. Supporting files are symlinked and the originals are not changed. Project skills (`.claude/skills` and others) load as before, without the line.
 - **Prompt size:** Crush's first request is about 49K characters (26 tools). Claude Code with plugins and MCP was about 105K (32 tools), and `claude-local --bare` about 4K. A smaller prompt means a faster first reply on a local server.
 
 ## What the profile sets

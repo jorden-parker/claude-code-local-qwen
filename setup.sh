@@ -149,10 +149,35 @@ option metrics false
 option provider-auto-update false
 option request-timeout 1800
 EOF
-  # shellcheck disable=SC2016
-  printf '%s\n' '#!/bin/sh' \
-    'export CRUSH_GLOBAL_CONFIG="$HOME/.config/crush-local" CRUSH_GLOBAL_DATA="$HOME/.local/share/crush-local" CRUSH_DISABLE_DEFAULT_PROVIDERS=1' \
-    'exec crush "$@"' > "$crush_launcher"
+  cat > "$crush_launcher" <<'EOF'
+#!/bin/sh
+export CRUSH_GLOBAL_CONFIG="$HOME/.config/crush-local" CRUSH_GLOBAL_DATA="$HOME/.local/share/crush-local" CRUSH_DISABLE_DEFAULT_PROVIDERS=1
+xdg_config="${XDG_CONFIG_HOME:-$HOME/.config}"
+invocable_skills="$CRUSH_GLOBAL_DATA/skills"
+rm -rf "$invocable_skills"
+mkdir -p "$invocable_skills"
+for source_dir in "$xdg_config/crush/skills" "$xdg_config/agents/skills" "$HOME/.agents/skills" "$HOME/.claude/skills"; do
+  for skill_file in "$source_dir"/*/SKILL.md; do
+    [ -f "$skill_file" ] || continue
+    skill_dir=$(dirname "$skill_file")
+    skill_copy="$invocable_skills/$(basename "$skill_dir")"
+    rm -rf "$skill_copy"
+    mkdir -p "$skill_copy"
+    for skill_entry in "$skill_dir"/*; do
+      [ "$(basename "$skill_entry")" = SKILL.md ] || ln -s "$skill_entry" "$skill_copy/"
+    done
+    awk '
+      { line = $0; sub(/\r$/, "", line) }
+      NR == 1 { in_frontmatter = (line == "---"); print; next }
+      in_frontmatter && line ~ /^user-invocable:/ { has_setting = 1 }
+      in_frontmatter && line == "---" { if (!has_setting) print "user-invocable: true"; in_frontmatter = 0 }
+      { print }
+    ' "$skill_file" > "$skill_copy/SKILL.md"
+  done
+done
+export CRUSH_SKILLS_DIR="$invocable_skills"
+exec crush "$@"
+EOF
   chmod +x "$crush_launcher"
   echo "crush:    $crush_config_dir/crushrc"
   echo "launcher: $crush_launcher"
