@@ -109,7 +109,13 @@ write_launch_agent() {
 run_start_server() {
   say "Starting llama-server"
   write_launch_agent
-  launchctl bootout "gui/$(id -u)/local.qwen.llama-server" 2>/dev/null || true
+  service="gui/$(id -u)/local.qwen.llama-server"
+  launchctl bootout "$service" 2>/dev/null || true
+  unload_polls=0
+  while launchctl print "$service" >/dev/null 2>&1 && [ "$unload_polls" -lt 50 ]; do
+    unload_polls=$((unload_polls + 1))
+    sleep 0.2
+  done
   launchctl bootstrap "gui/$(id -u)" "$launch_agent"
   attempts=0
   until curl -sf "$SERVER_URL/health" >/dev/null 2>&1; do

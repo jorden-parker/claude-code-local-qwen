@@ -98,6 +98,22 @@ check "dflash LaunchAgent loads the downloaded draft GGUF" has_argument_pair -md
 check "dflash LaunchAgent selects draft-dflash decoding" has_argument_pair --spec-type draft-dflash
 check "dflash LaunchAgent sets 7 draft tokens" has_argument_pair --spec-draft-n-max 7
 
+start_bin="$fake_home/start-bin"
+unload_polls_left="$fake_home/unload-polls-left"
+mkdir -p "$start_bin"
+cat > "$start_bin/launchctl" <<EOF
+#!/bin/sh
+polls=\$(cat "$unload_polls_left" 2>/dev/null || echo 0)
+case "\$1" in
+  bootout) echo 3 > "$unload_polls_left" ;;
+  print) [ "\$polls" -gt 0 ] || exit 1; echo \$((polls - 1)) > "$unload_polls_left" ;;
+  bootstrap) [ "\$polls" -eq 0 ] || { echo "Bootstrap failed: 5: Input/output error" >&2; exit 5; } ;;
+esac
+EOF
+printf '#!/bin/sh\n' > "$start_bin/curl"
+chmod +x "$start_bin/launchctl" "$start_bin/curl"
+check "start waits for the old server to unload before bootstrapping" env -i HOME="$fake_home" PATH="$start_bin:$fake_bin:$PATH" MODELS_DIR="$models_dir" "$repo_dir/setup.sh" start
+
 low_memory_home="$fake_home/low-memory"
 mkdir -p "$low_memory_home"
 setup_status=0
