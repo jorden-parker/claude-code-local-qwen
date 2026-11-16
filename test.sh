@@ -57,7 +57,7 @@ check "profile overrides apiKeyHelper with an empty string" jq -e '.apiKeyHelper
 check "profile stage logs the available models" sh -c 'printf "%s\n" "$1" | grep -q "^available models: test-model$"' sh "$profile_output"
 check "base URL points at local llama-server" jq -e '.env.ANTHROPIC_BASE_URL == "http://127.0.0.1:8080"' "$profile"
 check "every model alias uses the local model" jq -e '[.env.ANTHROPIC_MODEL, .env.ANTHROPIC_DEFAULT_OPUS_MODEL, .env.ANTHROPIC_DEFAULT_SONNET_MODEL, .env.ANTHROPIC_DEFAULT_HAIKU_MODEL, .env.CLAUDE_CODE_SUBAGENT_MODEL] | all(. == "test-model")' "$profile"
-check "profile env matches the llama-server setup" jq -e --arg model test-model '.env == {ANTHROPIC_BASE_URL: "http://127.0.0.1:8080", ANTHROPIC_AUTH_TOKEN: "local", ANTHROPIC_API_KEY: "", ANTHROPIC_MODEL: $model, ANTHROPIC_DEFAULT_OPUS_MODEL: $model, ANTHROPIC_DEFAULT_SONNET_MODEL: $model, ANTHROPIC_DEFAULT_HAIKU_MODEL: $model, CLAUDE_CODE_SUBAGENT_MODEL: $model, CLAUDE_CODE_MAX_CONTEXT_TOKENS: "131072", CLAUDE_CODE_AUTO_COMPACT_WINDOW: "100000", CLAUDE_CODE_MAX_OUTPUT_TOKENS: "24576", API_TIMEOUT_MS: "1800000", CLAUDE_CODE_ATTRIBUTION_HEADER: "0", CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", CLAUDE_CODE_DISABLE_TERMINAL_TITLE: "1"}' "$profile"
+check "profile env matches the llama-server setup" jq -e --arg model test-model '.env == {ANTHROPIC_BASE_URL: "http://127.0.0.1:8080", ANTHROPIC_AUTH_TOKEN: "local", ANTHROPIC_API_KEY: "", ANTHROPIC_MODEL: $model, ANTHROPIC_DEFAULT_OPUS_MODEL: $model, ANTHROPIC_DEFAULT_SONNET_MODEL: $model, ANTHROPIC_DEFAULT_HAIKU_MODEL: $model, CLAUDE_CODE_SUBAGENT_MODEL: $model, CLAUDE_CODE_MAX_CONTEXT_TOKENS: "131072", CLAUDE_CODE_AUTO_COMPACT_WINDOW: "100000", CLAUDE_CODE_MAX_OUTPUT_TOKENS: "24576", API_TIMEOUT_MS: "1800000", CLAUDE_CODE_ATTRIBUTION_HEADER: "0", CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: "1", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1", CLAUDE_CODE_DISABLE_TERMINAL_TITLE: "1", CLAUDE_CODE_EFFORT_LEVEL: "low"}' "$profile"
 check "thinking budget is not capped" jq -e '.env | has("MAX_THINKING_TOKENS") | not' "$profile"
 check "launcher is executable" test -x "$launcher"
 check "launcher passes the profile" grep -q 'local-qwen.json' "$launcher"
@@ -122,6 +122,7 @@ check "LaunchAgent port is 8080" has_argument_pair --port 8080
 check "context window is 131072" has_argument_pair -c 131072
 check "KV cache is q8_0" has_argument_pair --cache-type-k q8_0
 check "V cache is q8_0" has_argument_pair --cache-type-v q8_0
+check "Qwen thinks at low effort by default" has_argument_pair --chat-template-kwargs '{"reasoning_effort":"low"}'
 check "prompt cache is capped at 16384 MiB" has_argument_pair --cache-ram 16384
 chat_template="$fake_home/.config/local-qwen/qwen3.8-27b-chat-template.jinja"
 check "LaunchAgent uses the installed chat template" has_argument_pair --chat-template-file "$chat_template"
@@ -152,6 +153,17 @@ check "flint LaunchAgent is written" setup_env MODEL_REPO=unsloth/flint-GGUF MOD
 plutil -convert json -o "$agent_json" "$launch_agent" 2>/dev/null || true
 check "flint LaunchAgent serves the flint GGUF" jq -e --arg gguf "$flint_gguf" '.ProgramArguments | any(. == $gguf)' "$agent_json"
 check "flint LaunchAgent uses the GGUF's own chat template" jq -e '.ProgramArguments | any(. == "--chat-template-file") | not' "$agent_json"
+check "flint LaunchAgent gets no Qwen template options" jq -e '.ProgramArguments | any(. == "--chat-template-kwargs") | not' "$agent_json"
+
+setup_env REASONING_EFFORT=medium "$repo_dir/setup.sh" launch-agent >/dev/null
+plutil -convert json -o "$agent_json" "$launch_agent" 2>/dev/null || true
+check "REASONING_EFFORT reaches the chat template" has_argument_pair --chat-template-kwargs '{"reasoning_effort":"medium"}'
+setup_env REASONING_EFFORT=medium "$repo_dir/setup.sh" profile >/dev/null
+check "REASONING_EFFORT reaches the Claude Code profile" jq -e '.env.CLAUDE_CODE_EFFORT_LEVEL == "medium"' "$profile"
+effort_status=0
+effort_output=$(setup_env REASONING_EFFORT=bogus "$repo_dir/setup.sh" launch-agent 2>&1) || effort_status=$?
+check "invalid REASONING_EFFORT fails" test "$effort_status" -ne 0
+check "invalid REASONING_EFFORT lists low, medium or xhigh" sh -c 'printf "%s\n" "$1" | grep -q "low, medium or xhigh"' sh "$effort_output"
 
 hf_calls="$fake_home/hf-calls"
 printf '#!/bin/sh\necho "$*" >> "%s"\n' "$hf_calls" > "$fake_bin/hf"
@@ -233,6 +245,13 @@ check "logs says when the service is not loaded" sh -c 'printf "%s\n" "$1" | gre
 check "logs says when the server log is missing" sh -c 'printf "%s\n" "$1" | grep -q "no server log"' sh "$logs_output"
 check "logs streams the server log once it appears" sh -c 'printf "%s\n" "$1" | grep -q "srv  server started later"' sh "$logs_output"
 check "logs shows macOS launchd messages when the service is not loaded" sh -c 'printf "%s\n" "$1" | grep -q "bootstrap failed"' sh "$logs_output"
+
+timing_line='slot print_timing: id  0 | task 7 | prompt eval time =   78.16 ms /  1264 tokens'
+cached_line='slot   operator(): id  0 | task 7 | cached n_tokens = 9000, memory_seq_rm [9000, end)'
+printf '%s\n' 'srv  load_model: loaded' "$cached_line" "$timing_line" 'slot      release: id  0 | task 7 | stop processing' > "$server_log"
+speed_output=$(env -i HOME="$logs_home" PATH="$logs_bin:/usr/bin:/bin" perl -e 'alarm 5; exec @ARGV' "$repo_dir/logs.sh" speed 2>/dev/null || true)
+check "logs speed prints only the cache and timing lines, then exits" test "$speed_output" = "$cached_line
+$timing_line"
 
 check "gpu-limit rejects non-numeric values" sh -c "! '$repo_dir/gpu-limit.sh' abc"
 check "gpu-limit rejects values that starve macOS" sh -c "! '$repo_dir/gpu-limit.sh' 46000"

@@ -5,6 +5,11 @@ service="gui/$(id -u)/local.qwen.llama-server"
 server_log="$HOME/Library/Logs/qwen-llama-server.log"
 line_count=${LINE_COUNT:-50}
 
+if [ "${1:-}" = speed ]; then
+  grep -E 'print_timing|new prompt|cached n_tokens|re-processing|checkpoint' "$server_log" | tail -n "$line_count"
+  exit
+fi
+
 echo "==> Service $service"
 if service_details=$(launchctl print "$service" 2>/dev/null); then
   printf '%s\n' "$service_details" | grep -E 'state =|last exit code|pid ='

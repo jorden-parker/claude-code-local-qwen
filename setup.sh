@@ -11,6 +11,7 @@ MODELS_DIR=${MODELS_DIR:-$HOME/models}
 SPEC_DECODING=${SPEC_DECODING:-none}
 DRAFT_REPO=${DRAFT_REPO:-z-lab/Qwen3.8-27B-DFlash2-GGUF}
 DRAFT_QUANT=${DRAFT_QUANT:-Q4_K_M}
+REASONING_EFFORT=${REASONING_EFFORT:-low}
 MIN_MEMORY_BYTES=${MIN_MEMORY_BYTES:-51539607552}
 MIN_FREE_DISK_KB=31457280
 launch_agent="$HOME/Library/LaunchAgents/local.qwen.llama-server.plist"
@@ -75,7 +76,15 @@ resolve_gguf() {
   echo "$file"
 }
 
+require_valid_reasoning_effort() {
+  case "$REASONING_EFFORT" in
+    low|medium|xhigh) ;;
+    *) fail "REASONING_EFFORT must be low, medium or xhigh, found $REASONING_EFFORT" ;;
+  esac
+}
+
 write_launch_agent() {
+  require_valid_reasoning_effort
   say "Writing LaunchAgent $launch_agent"
   llama_server=$(command -v llama-server) || fail "llama-server not found. Run ./setup.sh install"
   gguf=$(resolve_gguf "$MODEL_REPO" "$MODEL_QUANT")
@@ -100,6 +109,7 @@ write_launch_agent() {
   esac
   jq -n \
     --arg chat_template "$template_file" \
+    --arg reasoning_effort "$REASONING_EFFORT" \
     --arg server "$llama_server" \
     --arg gguf "$gguf" \
     --arg model_alias "$MODEL_ALIAS" \
@@ -112,7 +122,7 @@ write_launch_agent() {
     '{
       Label: "local.qwen.llama-server",
       ProgramArguments: ([$server, "-m", $gguf, "--alias", $model_alias, "--host", "127.0.0.1", "--port", $port, "-c", $context, "-ngl", "99", "-fa", "on", "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "--jinja"]
-        + (if $chat_template == "" then [] else ["--chat-template-file", $chat_template] end)
+        + (if $chat_template == "" then [] else ["--chat-template-file", $chat_template, "--chat-template-kwargs", ({reasoning_effort: $reasoning_effort} | tojson)] end)
         + ["--parallel", "1", "--cache-ram", "16384", "--temp", "1.0", "--top-p", "0.95", "--top-k", "20", "--min-p", "0", "--presence-penalty", "0"]
         + (if $spec_type == "" then [] else ["--spec-type", $spec_type, "--spec-draft-n-max", $spec_draft_max] end)
         + (if $draft == "" then [] else ["-md", $draft] end)),
@@ -201,9 +211,11 @@ run_profile() {
   profile="$HOME/.claude/local-qwen.json"
   launcher_dir="$HOME/.local/bin"
   launcher="$launcher_dir/claude-local"
+  require_valid_reasoning_effort
   say "Writing Claude Code profile for $model_id"
   mkdir -p "$HOME/.claude" "$launcher_dir"
   jq -n \
+    --arg reasoning_effort "$REASONING_EFFORT" \
     --arg base_url "$SERVER_URL" \
     --arg model "$model_id" \
     --arg context "$CONTEXT_TOKENS" \
@@ -223,7 +235,8 @@ run_profile() {
       CLAUDE_CODE_ATTRIBUTION_HEADER: "0",
       CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: "1",
       CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
-      CLAUDE_CODE_DISABLE_TERMINAL_TITLE: "1"
+      CLAUDE_CODE_DISABLE_TERMINAL_TITLE: "1",
+      CLAUDE_CODE_EFFORT_LEVEL: $reasoning_effort
     }}' > "$profile"
   # shellcheck disable=SC2016
   printf '%s\n' '#!/bin/sh' 'exec claude --settings "$HOME/.claude/local-qwen.json" --strict-mcp-config --tools=Bash,Read,Edit,Write,Skill,ExitPlanMode "$@"' > "$launcher"

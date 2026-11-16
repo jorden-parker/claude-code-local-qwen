@@ -19,12 +19,15 @@ The server runs with:
 ```sh
 llama-server -c 131072 -ngl 99 -fa on --cache-type-k q8_0 --cache-type-v q8_0 \
   --jinja --chat-template-file ~/.config/local-qwen/qwen3.8-27b-chat-template.jinja \
+  --chat-template-kwargs '{"reasoning_effort":"low"}' \
   --parallel 1 --cache-ram 16384 --temp 1.0 --top-p 0.95 --top-k 20 --min-p 0 --presence-penalty 0
 ```
 
 `--cache-ram 16384` sets the RAM cache size in MiB. When another request arrives, llama-server saves the single slot's state to that cache and reloads it later. The default 8192 can be too small for a ~100K-token conversation.
 
 Sampling is Qwen's thinking-mode recommendation. The script sets it, so there is no manual admin step.
+
+**Thinking effort is `low`.** The model thinks before every reply, and at ~10 tok/s that thinking is most of the wait. Checked on llama-server 0.6.0 by replaying Claude Code's requests: the server ignores Claude Code's effort setting, so the chat template fell back to its default, `xhigh`, for every request, background ones included. `/effort` inside Claude Code changes nothing. Setup now passes `low` to the template, which tells the model to keep its thinking brief. Qwen's card warns that lower effort can cause more failed steps and retries on hard tasks. To go back: `REASONING_EFFORT=xhigh ./setup.sh start profile` (or `medium`).
 
 **Chat template:** `qwen3.8-27b-chat-template.jinja` is the GGUF's own template with one change. Claude Code sends hook output as a `system` message after the first user message, and the stock template rejects that with `Jinja Exception: System message must be at the beginning.` The patched copy renders it as a normal system turn instead. Setup applies it only when `MODEL_REPO` contains `qwen`. Any other model uses its GGUF's own template.
 
@@ -61,6 +64,7 @@ Options (environment variables):
 |---|---|---|
 | `MODEL_QUANT` | `UD-Q4_K_XL` | Quant to download. `UD-Q5_K_XL` (21 GB) or `UD-Q6_K_XL` for more quality |
 | `CONTEXT_TOKENS` | `131072` | Server context window. `262144` is the native max |
+| `REASONING_EFFORT` | `low` | How long Qwen thinks before each reply: `low`, `medium` or `xhigh`. Lower is faster. Pass it to both `start` and `profile` |
 | `SPEC_DECODING` | `none` | `none`, `mtp` (uses heads already in the GGUF, no download) or `dflash` (adds a 1.1 GB drafter). See step 5 |
 | `SERVER_PORT` / `SERVER_URL` | `8080` / `http://127.0.0.1:8080` | Where the server listens |
 | `MODEL_REPO`, `MODEL_ALIAS` | `unsloth/Qwen3.8-27B-GGUF`, `qwen3.8-27b` | Model source and the name Claude Code sees |
@@ -138,7 +142,8 @@ rm -rf ~/.omlx          # optional: frees ~29 GB of old model files
 - What is left in the lean prompt is mostly your own plugin hooks and CLAUDE.md rules. Run `/context` to see them.
 - Use plain `claude` for your normal Anthropic setup. Nothing else changes.
 - Long local runs: `caffeinate -dims claude-local` stops the Mac from sleeping while the agent works, and `-s` only applies on the charger. Keep the lid open: some MacBook Pros cool through the keyboard.
-- Thinking is on. Qwen's card says lower reasoning effort "does not always reduce overall task completion time" in multi-turn agentic tasks, because it can cause more failures and retries. Leave it on unless you measure a gain.
+- `./logs.sh speed` prints the last 50 cache and timing lines and exits. `task.n_tokens` is the size of the whole prompt, and the token count on the `prompt eval time` line is how much of it the server had to read again. If those two stay close on every turn, the prompt cache is not hitting.
+- Thinking is on at `low` effort. See [the note above](#why-this-model-and-runtime) for why and how to raise it.
 - Remote Control is disabled while `ANTHROPIC_BASE_URL` points at a local server ([docs](https://code.claude.com/docs/en/env-vars)).
 
 ## Crush
@@ -164,6 +169,7 @@ rm -rf ~/.omlx          # optional: frees ~29 GB of old model files
 | `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` | Strips Claude-only beta fields like `context_management` and `defer_loading`. Also turns off MCP tool search |
 | `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` | No telemetry or update checks |
 | `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1` | No background request to write a session title. It would queue on the single llama-server slot next to your first message |
+| `CLAUDE_CODE_EFFORT_LEVEL=low` | Matches the server's `REASONING_EFFORT`. llama-server 0.6.0 ignores it, but a version that starts reading it would otherwise get Claude Code's default, `high` |
 | `promptSuggestionEnabled: false` | Top-level setting, not an env var. No background prompt-suggestion request, which would queue behind the single llama-server slot |
 | `idleCompaction: false` | Top-level setting, not an env var. No background compaction while idle, which would occupy the single slot |
 | `apiKeyHelper: ""` | Top-level setting. Overrides any `apiKeyHelper` from your normal settings so `claude-local` uses the local token |
