@@ -175,6 +175,10 @@ MODEL_REPO=unsloth/Qwen3.6-35B-A3B-GGUF MODEL_QUANT=UD-Q4_K_XL MODEL_ALIAS=qwen3
 
 To go back to Qwen3.8-27B: `./setup.sh start profile`.
 
+## Stopping the server
+
+`./setup.sh stop` unloads `llama-server` from launchd and frees its memory. Use this, not `kill`: the LaunchAgent has `KeepAlive`, so a killed server restarts at once. It starts again at your next login, or with `./setup.sh start`.
+
 ## Uninstall
 
 ```sh

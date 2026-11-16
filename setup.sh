@@ -115,9 +115,7 @@ write_launch_agent() {
   plutil -convert xml1 "$launch_agent"
 }
 
-run_start_server() {
-  say "Starting llama-server"
-  write_launch_agent
+run_stop_server() {
   service="gui/$(id -u)/local.qwen.llama-server"
   launchctl bootout "$service" 2>/dev/null || true
   unload_polls=0
@@ -125,6 +123,12 @@ run_start_server() {
     unload_polls=$((unload_polls + 1))
     sleep 0.2
   done
+}
+
+run_start_server() {
+  say "Starting llama-server"
+  write_launch_agent
+  run_stop_server
   launchctl bootstrap "gui/$(id -u)" "$launch_agent"
   attempts=0
   until curl -sf "$SERVER_URL/health" >/dev/null 2>&1; do
@@ -242,8 +246,9 @@ case "${1:-all}" in
   install) run_install ;;
   download) run_download ;;
   start) run_start_server ;;
+  stop) run_stop_server; echo "llama-server stopped" ;;
   profile) run_profile ;;
   launch-agent) write_launch_agent ;;
   all) run_all ;;
-  *) fail "usage: $0 [all|preflight|install|download|start|profile|launch-agent]" ;;
+  *) fail "usage: $0 [all|preflight|install|download|start|stop|profile|launch-agent]" ;;
 esac

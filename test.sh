@@ -171,6 +171,14 @@ printf '#!/bin/sh\n' > "$start_bin/curl"
 chmod +x "$start_bin/launchctl" "$start_bin/curl"
 check "start waits for the old server to unload before bootstrapping" env -i HOME="$fake_home" PATH="$start_bin:$fake_bin:$PATH" MODELS_DIR="$models_dir" "$repo_dir/setup.sh" start
 
+stop_bin="$fake_home/stop-bin"
+launchctl_calls="$fake_home/launchctl-calls"
+mkdir -p "$stop_bin"
+printf '#!/bin/sh\necho "$*" >> "%s"\n[ "$1" != print ]\n' "$launchctl_calls" > "$stop_bin/launchctl"
+chmod +x "$stop_bin/launchctl"
+check "stop succeeds" env -i HOME="$fake_home" PATH="$stop_bin:$PATH" "$repo_dir/setup.sh" stop
+check "stop boots the llama-server service out of launchd" grep -q "^bootout gui/$(id -u)/local.qwen.llama-server$" "$launchctl_calls"
+
 low_memory_home="$fake_home/low-memory"
 mkdir -p "$low_memory_home"
 setup_status=0
