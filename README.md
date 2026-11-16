@@ -47,7 +47,7 @@ This does, in order:
 
 | Stage | What it does |
 |---|---|
-| `profile` | Writes `~/.claude/local-qwen.json`, `~/.config/crush-local/crushrc` and the `claude-local` and `crush-local` launchers |
+| `profile` | Writes `~/.claude/local-qwen.json`, `~/.config/crush-local/crushrc` and the `claude-local` and `crush-local` launchers. `claude-local` loads only the core tools (see [Tips](#tips)) |
 | `preflight` | Checks chip (arm64), memory, disk |
 | `install` | Installs or upgrades `llama.cpp`, `hf` and `jq`, updates Claude Code |
 | `download` | Downloads the GGUF (~17.7 GB) to `~/models/Qwen3.8-27B-GGUF` |
@@ -132,7 +132,10 @@ rm -rf ~/.omlx          # optional: frees ~29 GB of old model files
 ## Tips
 
 - `./logs.sh` shows whether the server is running, then streams its log (last 50 lines first) until you press Ctrl-C. If the server is not loaded, it also shows recent macOS `launchd` messages about it, which is where errors like `Bootstrap failed: 5` end up.
-- `claude-local --bare` loads only the Bash, read and edit tools and skips CLAUDE.md, MCP, skills and hooks. The prompt gets much smaller, so replies come faster.
+- **`claude-local` is lean by default.** The launcher passes `--strict-mcp-config --tools=Bash,Read,Edit,Write,ExitPlanMode`: no MCP servers, no subagents, no skills tool, no web tools. A local model reads the whole prompt before its first word, and tool definitions were 70% of it. Measured on one Mac with plugins: the first request went from 97,751 to 30,556 characters, so the first reply starts in about a third of the time.
+- **Everything back:** `claude --settings ~/.claude/local-qwen.json` loads every tool, MCP server and skill, at the full prompt size.
+- **Smallest prompt:** `claude-local --bare` also skips CLAUDE.md, hooks and plugins. Measured: 4,058 characters.
+- What is left in the lean prompt is mostly your own plugin hooks and CLAUDE.md rules. Run `/context` to see them.
 - Use plain `claude` for your normal Anthropic setup. Nothing else changes.
 - Long local runs: `caffeinate -dims claude-local` stops the Mac from sleeping while the agent works, and `-s` only applies on the charger. Keep the lid open: some MacBook Pros cool through the keyboard.
 - Thinking is on. Qwen's card says lower reasoning effort "does not always reduce overall task completion time" in multi-turn agentic tasks, because it can cause more failures and retries. Leave it on unless you measure a gain.
@@ -145,7 +148,7 @@ rm -rf ~/.omlx          # optional: frees ~29 GB of old model files
 - **Config:** `~/.config/crush-local/crushrc`. It uses Crush's `llamacpp` provider type, sets the context window to match the server, and uses the local model for both the large and small slots.
 - **Separate from plain `crush`:** the launcher sets `CRUSH_GLOBAL_CONFIG`, `CRUSH_GLOBAL_DATA` and `CRUSH_DISABLE_DEFAULT_PROVIDERS=1`, so only the local model shows up and your normal Crush setup is not touched.
 - **Skills in the `ctrl+p` palette:** Crush only lists skills marked `user-invocable: true`. On each start the launcher copies the skills from `~/.config/crush/skills`, `~/.config/agents/skills`, `~/.agents/skills` and `~/.claude/skills` to `~/.local/share/crush-local/skills`, adds that line unless the skill already sets it, and points `CRUSH_SKILLS_DIR` there. Supporting files are symlinked and the originals are not changed. Project skills (`.claude/skills` and others) load as before, without the line.
-- **Prompt size:** Crush's first request is about 49K characters (26 tools). Claude Code with plugins and MCP was about 105K (32 tools), and `claude-local --bare` about 4K. A smaller prompt means a faster first reply on a local server.
+- **Prompt size:** Crush's first request is about 49K characters (26 tools). Claude Code with every tool, plugins and MCP was about 98K (32 tools), the lean `claude-local` default is about 31K, and `claude-local --bare` about 4K. A smaller prompt means a faster first reply on a local server.
 
 ## What the profile sets
 
@@ -160,6 +163,7 @@ rm -rf ~/.omlx          # optional: frees ~29 GB of old model files
 | `CLAUDE_CODE_ATTRIBUTION_HEADER=0` | Keeps the prompt prefix stable so the KV cache hits |
 | `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` | Strips Claude-only beta fields like `context_management` and `defer_loading`. Also turns off MCP tool search |
 | `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` | No telemetry or update checks |
+| `CLAUDE_CODE_DISABLE_TERMINAL_TITLE=1` | No background request to write a session title. It would queue on the single llama-server slot next to your first message |
 | `promptSuggestionEnabled: false` | Top-level setting, not an env var. No background prompt-suggestion request, which would queue behind the single llama-server slot |
 | `idleCompaction: false` | Top-level setting, not an env var. No background compaction while idle, which would occupy the single slot |
 | `apiKeyHelper: ""` | Top-level setting. Overrides any `apiKeyHelper` from your normal settings so `claude-local` uses the local token |

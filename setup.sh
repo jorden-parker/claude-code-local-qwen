@@ -222,10 +222,11 @@ run_profile() {
       API_TIMEOUT_MS: "1800000",
       CLAUDE_CODE_ATTRIBUTION_HEADER: "0",
       CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS: "1",
-      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1"
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
+      CLAUDE_CODE_DISABLE_TERMINAL_TITLE: "1"
     }}' > "$profile"
   # shellcheck disable=SC2016
-  printf '%s\n' '#!/bin/sh' 'exec claude --settings "$HOME/.claude/local-qwen.json" "$@"' > "$launcher"
+  printf '%s\n' '#!/bin/sh' 'exec claude --settings "$HOME/.claude/local-qwen.json" --strict-mcp-config --tools=Bash,Read,Edit,Write,ExitPlanMode "$@"' > "$launcher"
   chmod +x "$launcher"
   echo "profile:  $profile"
   echo "available models: $(jq -r '.availableModels | join(", ")' "$profile")"
