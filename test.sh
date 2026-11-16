@@ -155,6 +155,26 @@ check "flint LaunchAgent serves the flint GGUF" jq -e --arg gguf "$flint_gguf" '
 check "flint LaunchAgent uses the GGUF's own chat template" jq -e '.ProgramArguments | any(. == "--chat-template-file") | not' "$agent_json"
 check "flint LaunchAgent gets no Qwen template options" jq -e '.ProgramArguments | any(. == "--chat-template-kwargs") | not' "$agent_json"
 
+printf '#!/bin/sh\n' > "$fake_bin/splash"
+chmod +x "$fake_bin/splash"
+check "splash LaunchAgent is written" setup_env ENGINE=splash "$repo_dir/setup.sh" launch-agent
+plutil -convert json -o "$agent_json" "$launch_agent" 2>/dev/null || true
+check "splash LaunchAgent plist lints" plutil -lint "$launch_agent"
+check "splash LaunchAgent runs splash serve" jq -e --arg server "$fake_bin/splash" '.ProgramArguments[0:2] == [$server, "serve"]' "$agent_json"
+check "splash LaunchAgent serves the downloaded GGUF as a local model" has_argument_pair --model-dir "$gguf_path"
+check "splash LaunchAgent names the model by repo and quant" has_argument_pair --model unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_XL
+check "splash LaunchAgent accepts the alias the profile uses" has_argument_pair --served-model-name qwen3.8-27b
+check "splash LaunchAgent listens on 127.0.0.1" has_argument_pair --host 127.0.0.1
+check "splash LaunchAgent port is 8080" has_argument_pair --port 8080
+check "splash LaunchAgent caps the context at 131072" has_argument_pair --max-context 131072
+check "splash LaunchAgent defaults chat requests to low effort" has_argument_pair --default-reasoning-effort low
+check "splash LaunchAgent passes no llama-server flags" jq -e '.ProgramArguments | any(. == "-ngl" or . == "--chat-template-file" or . == "--cache-ram" or . == "-md") | not' "$agent_json"
+check "splash LaunchAgent keeps the service label, so stop and logs still work" jq -e '.Label == "local.qwen.llama-server" and .KeepAlive == true' "$agent_json"
+engine_status=0
+engine_output=$(setup_env ENGINE=bogus "$repo_dir/setup.sh" launch-agent 2>&1) || engine_status=$?
+check "invalid ENGINE fails" test "$engine_status" -ne 0
+check "invalid ENGINE lists llama or splash" sh -c 'printf "%s\n" "$1" | grep -q "llama or splash"' sh "$engine_output"
+
 setup_env REASONING_EFFORT=medium "$repo_dir/setup.sh" launch-agent >/dev/null
 plutil -convert json -o "$agent_json" "$launch_agent" 2>/dev/null || true
 check "REASONING_EFFORT reaches the chat template" has_argument_pair --chat-template-kwargs '{"reasoning_effort":"medium"}'
@@ -172,6 +192,10 @@ download_status=0
 setup_env SPEC_DECODING=mtp "$repo_dir/setup.sh" download >/dev/null 2>&1 || download_status=$?
 check "mtp download succeeds" test "$download_status" -eq 0
 check "mtp download fetches only the main model" sh -c "[ \"\$(grep -c '' '$hf_calls')\" -eq 1 ] && ! grep -q DFlash '$hf_calls'"
+: > "$hf_calls"
+check "splash download succeeds" setup_env ENGINE=splash "$repo_dir/setup.sh" download
+check "splash download puts the DFlash2 draft in the Hugging Face cache, where Splash looks for it" grep -qx 'download incoai/Qwen3.8-27B-DFlash2' "$hf_calls"
+check "splash download still fetches the main GGUF" grep -q '^download unsloth/Qwen3.8-27B-GGUF ' "$hf_calls"
 
 invalid_status=0
 invalid_output=$(setup_env SPEC_DECODING=bogus "$repo_dir/setup.sh" launch-agent 2>&1) || invalid_status=$?

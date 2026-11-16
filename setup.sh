@@ -12,6 +12,8 @@ SPEC_DECODING=${SPEC_DECODING:-none}
 DRAFT_REPO=${DRAFT_REPO:-z-lab/Qwen3.8-27B-DFlash2-GGUF}
 DRAFT_QUANT=${DRAFT_QUANT:-Q4_K_M}
 REASONING_EFFORT=${REASONING_EFFORT:-low}
+ENGINE=${ENGINE:-llama}
+SPLASH_DRAFT_REPO=${SPLASH_DRAFT_REPO:-incoai/Qwen3.8-27B-DFlash2}
 MIN_MEMORY_BYTES=${MIN_MEMORY_BYTES:-51539607552}
 MIN_FREE_DISK_KB=31457280
 launch_agent="$HOME/Library/LaunchAgents/local.qwen.llama-server.plist"
@@ -42,6 +44,9 @@ run_install() {
   command -v claude >/dev/null 2>&1 || fail "Claude Code not found. Install it from https://code.claude.com, then re-run"
   brew install llama.cpp hf jq
   brew upgrade llama.cpp
+  if use_splash; then
+    brew install incoai/tap/splash
+  fi
   claude update || echo "claude update failed; continuing with the installed version"
 }
 
@@ -60,9 +65,20 @@ use_draft() {
   esac
 }
 
+use_splash() {
+  case "$ENGINE" in
+    splash) return 0 ;;
+    llama) return 1 ;;
+    *) fail "ENGINE must be llama or splash, found $ENGINE" ;;
+  esac
+}
+
 run_download() {
   download_gguf "$MODEL_REPO" "$MODEL_QUANT"
-  if use_draft; then
+  if use_splash; then
+    say "Downloading $SPLASH_DRAFT_REPO to the Hugging Face cache, where Splash looks for its draft"
+    hf download "$SPLASH_DRAFT_REPO"
+  elif use_draft; then
     download_gguf "$DRAFT_REPO" "$DRAFT_QUANT"
   fi
 }
@@ -83,9 +99,37 @@ require_valid_reasoning_effort() {
   esac
 }
 
+write_splash_launch_agent() {
+  splash_binary=$(command -v splash) || fail "splash not found. Run ENGINE=splash ./setup.sh install"
+  gguf=$(resolve_gguf "$MODEL_REPO" "$MODEL_QUANT")
+  mkdir -p "$(dirname "$launch_agent")" "$(dirname "$server_log")"
+  jq -n \
+    --arg server "$splash_binary" \
+    --arg model "$MODEL_REPO:$MODEL_QUANT" \
+    --arg gguf "$gguf" \
+    --arg model_alias "$MODEL_ALIAS" \
+    --arg port "$SERVER_PORT" \
+    --arg context "$CONTEXT_TOKENS" \
+    --arg reasoning_effort "$REASONING_EFFORT" \
+    --arg log "$server_log" \
+    '{
+      Label: "local.qwen.llama-server",
+      ProgramArguments: [$server, "serve", "--model", $model, "--model-dir", $gguf, "--served-model-name", $model_alias, "--host", "127.0.0.1", "--port", $port, "--max-context", $context, "--default-reasoning-effort", $reasoning_effort],
+      RunAtLoad: true,
+      KeepAlive: true,
+      StandardOutPath: $log,
+      StandardErrorPath: $log
+    }' > "$launch_agent"
+  plutil -convert xml1 "$launch_agent"
+}
+
 write_launch_agent() {
   require_valid_reasoning_effort
   say "Writing LaunchAgent $launch_agent"
+  if use_splash; then
+    write_splash_launch_agent
+    return
+  fi
   llama_server=$(command -v llama-server) || fail "llama-server not found. Run ./setup.sh install"
   gguf=$(resolve_gguf "$MODEL_REPO" "$MODEL_QUANT")
   draft=""

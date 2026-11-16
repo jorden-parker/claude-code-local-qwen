@@ -66,6 +66,8 @@ Options (environment variables):
 | `CONTEXT_TOKENS` | `131072` | Server context window. `262144` is the native max |
 | `REASONING_EFFORT` | `low` | How long Qwen thinks before each reply: `low`, `medium` or `xhigh`. Lower is faster. Pass it to both `start` and `profile` |
 | `SPEC_DECODING` | `none` | `none`, `mtp` (uses heads already in the GGUF, no download) or `dflash` (adds a 1.1 GB drafter). See step 5 |
+| `ENGINE` | `llama` | `llama` (llama-server) or `splash` (faster on vendor numbers, not run here). See step 6 |
+| `SPLASH_DRAFT_REPO` | `incoai/Qwen3.8-27B-DFlash2` | The DFlash2 draft `ENGINE=splash` downloads for the model. Change it with `MODEL_REPO` |
 | `SERVER_PORT` / `SERVER_URL` | `8080` / `http://127.0.0.1:8080` | Where the server listens |
 | `MODEL_REPO`, `MODEL_ALIAS` | `unsloth/Qwen3.8-27B-GGUF`, `qwen3.8-27b` | Model source and the name Claude Code sees |
 | `MODELS_DIR` | `$HOME/models` | Where GGUFs are stored |
@@ -111,7 +113,7 @@ Then run `claude-local` in a real repo:
 Two speculative decoding options can speed up generation. Neither is verified for Claude Code on a Mac.
 
 - **DFlash** uses a 1.1 GB drafter (z-lab's Qwen3.8-27B-DFlash2-GGUF) that proposes ~5 tokens per step on its card. [PR #27342](https://github.com/ggml-org/llama.cpp/pull/27342) measured 10.42 → 18.89 tok/s (1.8x) with the Q4_K_M drafter on an Apple M5 Pro 64 GB, but on 8 short GSM8K prompts only. Claude Code prompts are 20K–100K tokens. In the PR thread, a 5090 tester saw DFlash2 slower than MTP at ~23K tokens, with acceptance falling to 31–36% at long context, and a 3090 tester saw prompt processing drop from 454 to 272 tok/s on coding prompts. The gain at Claude Code context lengths is unverified.
-- **MTP** (`SPEC_DECODING=mtp`) uses multi-token-prediction heads already inside the main GGUF. A PR #27342 commenter ran `--spec-type draft-mtp` on this exact Unsloth UD-Q4_K_XL file, so there is no extra download. Speed on a Mac is unverified.
+- **MTP** (`SPEC_DECODING=mtp`) uses multi-token-prediction heads already inside the main GGUF. A PR #27342 commenter ran `--spec-type draft-mtp` on this exact Unsloth UD-Q4_K_XL file, so there is no extra download. One Mac data point: [Splash's README](https://github.com/incoai/splash#gguf-against-llamacpp) measured llama.cpp on the 27B UD-Q4_K_M at 16 tok/s plain and 27 tok/s with MTP on an M5 Pro (17 and 20 on an M3 Max), on short prompts. Try MTP first: it costs no download. Speed at Claude Code context lengths is unverified.
 - **Draft length:** the DFlash drafter's block size is 8, so the default `--spec-draft-n-max 7` uses the full block. One 3090 tester got better results with 4. Worth trying.
 
 1. For DFlash only: `SPEC_DECODING=dflash ./setup.sh download start`. MTP needs no download.
@@ -122,6 +124,25 @@ Two speculative decoding options can speed up generation. Neither is verified fo
 3. Keep the fastest one with zero failed tool calls.
 
 Optional quant test: `MODEL_QUANT=UD-Q5_K_XL ./setup.sh download start profile` (21 GB, still under the default GPU limit), then compare with `UD-Q4_K_XL`.
+
+### 6. Optional: serve with Splash instead of llama-server
+
+> **Heads up:** not run on the Mac this repo was written on. The flags come from Splash's docs, and `./test.sh` checks only the LaunchAgent that setup writes. Treat it as an A/B test, like step 5.
+
+[Splash](https://github.com/incoai/splash) is a Metal engine built around DFlash2 drafting. It serves the same GGUF and the same Anthropic Messages API, so `claude-local` and the profile do not change.
+
+```sh
+ENGINE=splash ./setup.sh install download start
+./smoke-test.sh
+```
+
+- **Why try it:** on the same Unsloth UD-Q4_K_M weights, [Splash's README](https://github.com/incoai/splash#gguf-against-llamacpp) reports 74 tok/s for the 27B against llama.cpp's 16 (27 with MTP) on an M5 Pro, and 175 against 69 for Qwen3.6-35B-A3B. Vendor numbers, short prompts.
+- **Needs:** an M3 or newer and macOS 26.4 or later.
+- **What setup does:** `install` adds `brew install incoai/tap/splash`. `download` also fetches the draft (`incoai/Qwen3.8-27B-DFlash2`, 3.8 GB) into the Hugging Face cache, because Splash never downloads a draft for a local GGUF. `start` writes the same LaunchAgent with `splash serve --model-dir <the GGUF> --served-model-name qwen3.8-27b --max-context 131072 --default-reasoning-effort low`.
+- **What no longer applies:** the patched chat template (Splash renders later system messages itself), `SPEC_DECODING`, the KV cache flags and `--cache-ram`. `./logs.sh speed` greps llama-server's timing lines, so it prints nothing; read `./logs.sh` instead.
+- **Unverified:** `crush-local` against Splash, and how Claude Code's effort setting reaches it. Splash's docs say an Anthropic request thinks only when it asks to.
+- **Idle:** Splash frees the model after 10 minutes without a request and reloads it on the next one.
+- **Back to llama-server:** `./setup.sh start`.
 
 ## Migrating from the oMLX setup
 
@@ -144,6 +165,7 @@ rm -rf ~/.omlx          # optional: frees ~29 GB of old model files
 - Long local runs: `caffeinate -dims claude-local` stops the Mac from sleeping while the agent works, and `-s` only applies on the charger. Keep the lid open: some MacBook Pros cool through the keyboard.
 - `./logs.sh speed` prints the last 50 cache and timing lines and exits. `task.n_tokens` is the size of the whole prompt, and the token count on the `prompt eval time` line is how much of it the server had to read again. If those two stay close on every turn, the prompt cache is not hitting.
 - Thinking is on at `low` effort. See [the note above](#why-this-model-and-runtime) for why and how to raise it.
+- **Sudden slowdown:** one [report](https://x.com/heyvictortorres/status/2112558446872596767) on an M2 Max saw the same model run about 40% slower while an animated Aerial wallpaper was playing. Not checked here. If speed drops for no reason, switch to a still wallpaper and compare.
 - Remote Control is disabled while `ANTHROPIC_BASE_URL` points at a local server ([docs](https://code.claude.com/docs/en/env-vars)).
 
 ## Crush
@@ -190,7 +212,8 @@ MODEL_REPO=unsloth/flint-GGUF MODEL_QUANT=UD-Q4_K_XL MODEL_ALIAS=flint ./setup.s
 - **llama.cpp:** Flint needs llama.cpp 0.8.0 or newer ([PR #30928](https://github.com/ggml-org/llama.cpp/pull/30928)). The `install` stage in the command above upgrades it.
 - **Chat template:** setup uses the GGUF's own template for any non-Qwen `MODEL_REPO`. Flint's template accepts system messages at any position, so it needs no patch.
 - **Output budget:** Flint's card asks for at least 32768 output tokens on hard problems. The profile caps output at 24576 so it fits the 131072 window. If long replies get cut off, raise `CONTEXT_TOKENS`.
-- **No speculative decoding:** the GGUF has no MTP heads. Leave `SPEC_DECODING=none`.
+- **No MTP:** the GGUF has no MTP heads, so `SPEC_DECODING=mtp` does nothing. A DFlash2 draft exists (`SPEC_DECODING=dflash DRAFT_REPO=incoai/Flint-DFlash2-GGUF`, 240 MB), but its card has no GGUF numbers yet and it is untested here.
+- **Splash:** it lists this exact GGUF as supported. Add `ENGINE=splash SPLASH_DRAFT_REPO=incoai/Flint-DFlash2` to the command above (see step 6). For Qwen3.6-35B-A3B the draft is `incoai/Qwen3.6-35B-A3B-DFlash2`.
 
 The older Qwen3.6-35B-A3B MoE (3B active) still works: `MODEL_REPO=unsloth/Qwen3.6-35B-A3B-GGUF MODEL_ALIAS=qwen3.6-35b-a3b ./setup.sh download start profile`.
 
@@ -236,5 +259,6 @@ Checks the generated profile and launch-agent plist in a temporary home folder, 
 - Speeds are estimates (the 8–11 tok/s figure is a bandwidth-based estimate), not measured on your machine.
 - Benchmark scores are vendor-reported.
 - DFlash and MTP on Mac are unverified. A/B them before relying on either.
+- `ENGINE=splash` is unverified end to end. Its speed figures are Splash's own.
 - Anthropic does not officially support non-Claude models behind `ANTHROPIC_BASE_URL`. Claude Code may change how it talks to them.
 - llama.cpp flags, model IDs and the `/v1/models` response may change. If requests fail with an unknown model, run `curl -s localhost:8080/v1/models` and pass `MODEL_ID=<id>` to `./setup.sh profile`.
