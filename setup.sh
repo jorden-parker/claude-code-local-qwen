@@ -89,10 +89,17 @@ write_launch_agent() {
     mtp) spec_type="draft-mtp"; spec_draft_max=2 ;;
     dflash) spec_type="draft-dflash"; spec_draft_max=7 ;;
   esac
-  mkdir -p "$(dirname "$launch_agent")" "$(dirname "$server_log")" "$(dirname "$chat_template")"
-  cp "$repo_dir/qwen3.8-27b-chat-template.jinja" "$chat_template"
+  mkdir -p "$(dirname "$launch_agent")" "$(dirname "$server_log")"
+  template_file=""
+  case "$MODEL_REPO" in
+    *[Qq]wen*)
+      template_file=$chat_template
+      mkdir -p "$(dirname "$chat_template")"
+      cp "$repo_dir/qwen3.8-27b-chat-template.jinja" "$chat_template"
+      ;;
+  esac
   jq -n \
-    --arg chat_template "$chat_template" \
+    --arg chat_template "$template_file" \
     --arg server "$llama_server" \
     --arg gguf "$gguf" \
     --arg model_alias "$MODEL_ALIAS" \
@@ -104,7 +111,9 @@ write_launch_agent() {
     --arg log "$server_log" \
     '{
       Label: "local.qwen.llama-server",
-      ProgramArguments: ([$server, "-m", $gguf, "--alias", $model_alias, "--host", "127.0.0.1", "--port", $port, "-c", $context, "-ngl", "99", "-fa", "on", "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "--jinja", "--chat-template-file", $chat_template, "--parallel", "1", "--cache-ram", "16384", "--temp", "1.0", "--top-p", "0.95", "--top-k", "20", "--min-p", "0", "--presence-penalty", "0"]
+      ProgramArguments: ([$server, "-m", $gguf, "--alias", $model_alias, "--host", "127.0.0.1", "--port", $port, "-c", $context, "-ngl", "99", "-fa", "on", "--cache-type-k", "q8_0", "--cache-type-v", "q8_0", "--jinja"]
+        + (if $chat_template == "" then [] else ["--chat-template-file", $chat_template] end)
+        + ["--parallel", "1", "--cache-ram", "16384", "--temp", "1.0", "--top-p", "0.95", "--top-k", "20", "--min-p", "0", "--presence-penalty", "0"]
         + (if $spec_type == "" then [] else ["--spec-type", $spec_type, "--spec-draft-n-max", $spec_draft_max] end)
         + (if $draft == "" then [] else ["-md", $draft] end)),
       RunAtLoad: true,

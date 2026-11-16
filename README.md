@@ -26,7 +26,7 @@ llama-server -c 131072 -ngl 99 -fa on --cache-type-k q8_0 --cache-type-v q8_0 \
 
 Sampling is Qwen's thinking-mode recommendation. The script sets it, so there is no manual admin step.
 
-**Chat template:** `qwen3.8-27b-chat-template.jinja` is the GGUF's own template with one change. Claude Code sends hook output as a `system` message after the first user message, and the stock template rejects that with `Jinja Exception: System message must be at the beginning.` The patched copy renders it as a normal system turn instead. If you change `MODEL_REPO`, check this template still fits the new model.
+**Chat template:** `qwen3.8-27b-chat-template.jinja` is the GGUF's own template with one change. Claude Code sends hook output as a `system` message after the first user message, and the stock template rejects that with `Jinja Exception: System message must be at the beginning.` The patched copy renders it as a normal system turn instead. Setup applies it only when `MODEL_REPO` contains `qwen`. Any other model uses its GGUF's own template.
 
 ## Requirements
 
@@ -134,6 +134,7 @@ rm -rf ~/.omlx          # optional: frees ~29 GB of old model files
 - `./logs.sh` shows whether the server is running, then streams its log (last 50 lines first) until you press Ctrl-C. If the server is not loaded, it also shows recent macOS `launchd` messages about it, which is where errors like `Bootstrap failed: 5` end up.
 - `claude-local --bare` loads only the Bash, read and edit tools and skips CLAUDE.md, MCP, skills and hooks. The prompt gets much smaller, so replies come faster.
 - Use plain `claude` for your normal Anthropic setup. Nothing else changes.
+- Long local runs: `caffeinate -dims claude-local` stops the Mac from sleeping while the agent works, and `-s` only applies on the charger. Keep the lid open: some MacBook Pros cool through the keyboard.
 - Thinking is on. Qwen's card says lower reasoning effort "does not always reduce overall task completion time" in multi-turn agentic tasks, because it can cause more failures and retries. Leave it on unless you measure a gain.
 - Remote Control is disabled while `ANTHROPIC_BASE_URL` points at a local server ([docs](https://code.claude.com/docs/en/env-vars)).
 
@@ -167,13 +168,37 @@ Docs: [model config](https://code.claude.com/docs/en/model-config), [env vars](h
 
 ## Fallback: speed over smarts
 
-If the 27B is too slow for you, switch to the MoE. It has 3B active parameters, so it writes much faster but scores lower:
+If the 27B is too slow for you, switch to [Recursive Flint](https://huggingface.co/RecursiveSI/flint) (Apache 2.0, released 21 October 2026). It is a 40B mixture-of-experts coding model with ~2.5B parameters active per token, so it writes about 10x faster than the dense 27B:
 
 ```sh
-MODEL_REPO=unsloth/Qwen3.6-35B-A3B-GGUF MODEL_QUANT=UD-Q4_K_XL MODEL_ALIAS=qwen3.6-35b-a3b ./setup.sh download start profile
+MODEL_REPO=unsloth/flint-GGUF MODEL_QUANT=UD-Q4_K_XL MODEL_ALIAS=flint ./setup.sh install download start profile
 ```
 
+- **Speed:** Recursive reports 125+ tok/s at short context on a 48 GB M4 Pro (MLX). That is a vendor number, not measured here, and llama.cpp may be slower than MLX.
+- **Smarts:** it scores lower. Its card gives 54.9 on Terminal-Bench 2.1, against Qwen3.8-27B's 73.0. Flint's own run counts answers found through web retrieval as failures, so the gap may be smaller than it looks.
+- **Memory:** the GGUF is 25.1 GB. Only 14 of 49 layers keep a full KV cache (the other 35 use a 512-token sliding window), so the cache at 128K is ~2 GB. That makes ~27 GB in total, under the default GPU limit.
+- **llama.cpp:** Flint needs llama.cpp 0.8.0 or newer ([PR #30928](https://github.com/ggml-org/llama.cpp/pull/30928)). The `install` stage in the command above upgrades it.
+- **Chat template:** setup uses the GGUF's own template for any non-Qwen `MODEL_REPO`. Flint's template accepts system messages at any position, so it needs no patch.
+- **Output budget:** Flint's card asks for at least 32768 output tokens on hard problems. The profile caps output at 24576 so it fits the 131072 window. If long replies get cut off, raise `CONTEXT_TOKENS`.
+- **No speculative decoding:** the GGUF has no MTP heads. Leave `SPEC_DECODING=none`.
+
+The older Qwen3.6-35B-A3B MoE (3B active) still works: `MODEL_REPO=unsloth/Qwen3.6-35B-A3B-GGUF MODEL_ALIAS=qwen3.6-35b-a3b ./setup.sh download start profile`.
+
 To go back to Qwen3.8-27B: `./setup.sh start profile`.
+
+## Macs with less than 48 GB
+
+Preflight stops before starting `llama-server`, but `claude-local` is already written and points at `:8080`. Every request then hangs while Claude Code retries a server that is not there.
+
+On a 16 GB M1, point the profile at Ollama's 9B instead. Its KV cache at 128K is ~2 GB (8 of 32 layers keep one), so it loads fully on the GPU at 8.4 GB:
+
+```sh
+printf 'FROM qwen3.5-9b-plain-cc\nPARAMETER num_ctx 131072\n' > /tmp/Modelfile
+ollama create qwen3.5-9b-cc-128k -f /tmp/Modelfile
+SERVER_URL=http://127.0.0.1:11434 MODEL_ID=qwen3.5-9b-cc-128k ./setup.sh profile
+```
+
+Measured with `claude-local -p`: the first call takes ~4 min (full system-prompt prefill), the next one ~7 s (prompt cache hit). `claude-local --bare` cuts the first call a lot.
 
 ## Stopping the server
 

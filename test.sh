@@ -142,6 +142,14 @@ check "mtp LaunchAgent selects draft-mtp decoding" has_argument_pair --spec-type
 check "mtp LaunchAgent sets 2 draft tokens" has_argument_pair --spec-draft-n-max 2
 check "mtp LaunchAgent loads no draft GGUF" jq -e '.ProgramArguments | any(. == "-md") | not' "$agent_json"
 
+flint_gguf="$models_dir/flint-GGUF/flint-UD-Q4_K_XL.gguf"
+mkdir -p "$(dirname "$flint_gguf")"
+touch "$flint_gguf"
+check "flint LaunchAgent is written" setup_env MODEL_REPO=unsloth/flint-GGUF MODEL_ALIAS=flint "$repo_dir/setup.sh" launch-agent
+plutil -convert json -o "$agent_json" "$launch_agent" 2>/dev/null || true
+check "flint LaunchAgent serves the flint GGUF" jq -e --arg gguf "$flint_gguf" '.ProgramArguments | any(. == $gguf)' "$agent_json"
+check "flint LaunchAgent uses the GGUF's own chat template" jq -e '.ProgramArguments | any(. == "--chat-template-file") | not' "$agent_json"
+
 hf_calls="$fake_home/hf-calls"
 printf '#!/bin/sh\necho "$*" >> "%s"\n' "$hf_calls" > "$fake_bin/hf"
 chmod +x "$fake_bin/hf"
