@@ -226,7 +226,7 @@ run_profile() {
       CLAUDE_CODE_DISABLE_TERMINAL_TITLE: "1"
     }}' > "$profile"
   # shellcheck disable=SC2016
-  printf '%s\n' '#!/bin/sh' 'exec claude --settings "$HOME/.claude/local-qwen.json" --strict-mcp-config --tools=Bash,Read,Edit,Write,ExitPlanMode "$@"' > "$launcher"
+  printf '%s\n' '#!/bin/sh' 'exec claude --settings "$HOME/.claude/local-qwen.json" --strict-mcp-config --tools=Bash,Read,Edit,Write,Skill,ExitPlanMode "$@"' > "$launcher"
   chmod +x "$launcher"
   echo "profile:  $profile"
   echo "available models: $(jq -r '.availableModels | join(", ")' "$profile")"

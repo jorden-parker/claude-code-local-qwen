@@ -132,7 +132,7 @@ rm -rf ~/.omlx          # optional: frees ~29 GB of old model files
 ## Tips
 
 - `./logs.sh` shows whether the server is running, then streams its log (last 50 lines first) until you press Ctrl-C. If the server is not loaded, it also shows recent macOS `launchd` messages about it, which is where errors like `Bootstrap failed: 5` end up.
-- **`claude-local` is lean by default.** The launcher passes `--strict-mcp-config --tools=Bash,Read,Edit,Write,ExitPlanMode`: no MCP servers, no subagents, no skills tool, no web tools. A local model reads the whole prompt before its first word, and tool definitions were 70% of it. Measured on one Mac with plugins: the first request went from 97,751 to 30,556 characters, so the first reply starts in about a third of the time.
+- **`claude-local` is lean by default.** The launcher passes `--strict-mcp-config --tools=Bash,Read,Edit,Write,Skill,ExitPlanMode`: skills still work, but there are no MCP servers, no subagents and no web tools. A local model reads the whole prompt before its first word, and tool definitions were 70% of it. Measured on one Mac with plugins: the first request went from 97,751 to 39,224 characters, so the first reply starts in about 40% of the time. The skills tool and its list of skills are 8,668 of those characters.
 - **Everything back:** `claude --settings ~/.claude/local-qwen.json` loads every tool, MCP server and skill, at the full prompt size.
 - **Smallest prompt:** `claude-local --bare` also skips CLAUDE.md, hooks and plugins. Measured: 4,058 characters.
 - What is left in the lean prompt is mostly your own plugin hooks and CLAUDE.md rules. Run `/context` to see them.
@@ -148,7 +148,7 @@ rm -rf ~/.omlx          # optional: frees ~29 GB of old model files
 - **Config:** `~/.config/crush-local/crushrc`. It uses Crush's `llamacpp` provider type, sets the context window to match the server, and uses the local model for both the large and small slots.
 - **Separate from plain `crush`:** the launcher sets `CRUSH_GLOBAL_CONFIG`, `CRUSH_GLOBAL_DATA` and `CRUSH_DISABLE_DEFAULT_PROVIDERS=1`, so only the local model shows up and your normal Crush setup is not touched.
 - **Skills in the `ctrl+p` palette:** Crush only lists skills marked `user-invocable: true`. On each start the launcher copies the skills from `~/.config/crush/skills`, `~/.config/agents/skills`, `~/.agents/skills` and `~/.claude/skills` to `~/.local/share/crush-local/skills`, adds that line unless the skill already sets it, and points `CRUSH_SKILLS_DIR` there. Supporting files are symlinked and the originals are not changed. Project skills (`.claude/skills` and others) load as before, without the line.
-- **Prompt size:** Crush's first request is about 49K characters (26 tools). Claude Code with every tool, plugins and MCP was about 98K (32 tools), the lean `claude-local` default is about 31K, and `claude-local --bare` about 4K. A smaller prompt means a faster first reply on a local server.
+- **Prompt size:** Crush's first request is about 49K characters (26 tools). Claude Code with every tool, plugins and MCP was about 98K (32 tools), the lean `claude-local` default is about 39K, and `claude-local --bare` about 4K. A smaller prompt means a faster first reply on a local server.
 
 ## What the profile sets
 

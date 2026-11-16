@@ -61,7 +61,7 @@ check "profile env matches the llama-server setup" jq -e --arg model test-model 
 check "thinking budget is not capped" jq -e '.env | has("MAX_THINKING_TOKENS") | not' "$profile"
 check "launcher is executable" test -x "$launcher"
 check "launcher passes the profile" grep -q 'local-qwen.json' "$launcher"
-check "launcher loads only the core tools, with = so a prompt is not read as a tool name" grep -q -- ' --tools=Bash,Read,Edit,Write,ExitPlanMode ' "$launcher"
+check "launcher loads only the core tools and skills, with = so a prompt is not read as a tool name" grep -q -- ' --tools=Bash,Read,Edit,Write,Skill,ExitPlanMode ' "$launcher"
 check "launcher skips MCP servers" grep -q -- ' --strict-mcp-config ' "$launcher"
 check "launcher passes the caller's arguments last" grep -q -- ' "\$@"$' "$launcher"
 check "main settings.json is untouched" jq -e '. == {"theme":"dark"}' "$fake_home/.claude/settings.json"
